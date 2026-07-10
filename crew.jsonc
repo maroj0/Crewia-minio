@@ -1,0 +1,47 @@
+{
+  // Display name for this crew
+  "name": "qa",
+
+  // Agents to include — each must have a matching agents/<name>.jsonc file
+  "agents": ["qa_engineer", "qa_senior"],
+
+  // Task definitions — executed in order for sequential process
+  "tasks": [
+    {
+      "name": "generar_test_cases",
+
+      "description": "Lee el archivo de historia de usuario indicado en {hus} usando FileReadTool. Analiza la HU completa (descripción, criterios de aceptación, reglas, actores, precondiciones y flujos). Diseña TODOS los test cases razonables que surjan: camino feliz, validaciones, errores, bordes, estados vacíos, permisos/roles si aplica, y regresiones mínimas del flujo. Persistí el resultado en archivos bajo output/test-cases/ usando FileWriterTool:\n1) output/test-cases/test-cases.md — catálogo legible de todos los casos\n2) output/test-cases/test-cases.json — misma información estructurada para automatización\nCada caso debe incluir: id (TC-XXX), título, prioridad (Alta/Media/Baja), tipo (positivo/negativo/borde), precondiciones, pasos numerados, datos de prueba, resultado esperado, y si es candidato a automatización E2E (sí/no + motivo).",
+
+      "expected_output": "Archivos creados en output/test-cases/ con al menos:\n- test-cases.md: listado completo de casos con id, título, prioridad, tipo, precondiciones, pasos, datos y resultado esperado.\n- test-cases.json: array JSON de objetos con los mismos campos (id, title, priority, type, preconditions, steps, test_data, expected_result, automatable, automation_notes).\nDebe haber cobertura amplia de la HU (feliz, negativo y borde). El mensaje final debe confirmar las rutas de los archivos escritos y el total de test cases generados.",
+
+      "agent": "qa_engineer",
+      "output_file": "output/test-cases/summary.md"
+    },
+    {
+      "name": "generar_automatizaciones_playwright",
+
+      "description": "Usá el resultado de la task generar_test_cases (y leé output/test-cases/test-cases.json y/o test-cases.md con FileReadTool). Generá una suite Playwright en TypeScript bajo output/playwright/ que automatice TODOS los casos marcados como automatizables. Creá al menos:\n- output/playwright/package.json (deps de @playwright/test)\n- output/playwright/playwright.config.ts\n- output/playwright/tests/**/*.spec.ts (un spec por flujo o agrupación lógica; nombrá archivos con el id de los TCs)\n- output/playwright/pages/**/*Page.ts (Page Object Model)\n- output/playwright/fixtures/test-data.ts (datos reutilizables)\n- output/playwright/README.md (cómo instalar, ejecutar y mapa TC → spec)\n- output/playwright/EXCLUSIONES.md (casos no automatizados y por qué)\nUsá FileWriterTool para cada archivo. Preferí selectores accesibles (getByRole, getByLabel, getByTestId). Incluí asserts explícitos alineados al resultado esperado de cada TC. Si la HU no define URL base, usá process.env.BASE_URL o 'http://localhost:3000' como placeholder documentado.",
+
+      "expected_output": "Carpeta output/playwright/ creada en disco con proyecto Playwright TypeScript ejecutable, incluyendo package.json, playwright.config.ts, page objects, fixtures, specs .spec.ts para todos los TCs automatizables, README.md con mapa TC→archivo y EXCLUSIONES.md. El mensaje final debe listar los archivos generados y cuántos test cases quedaron automatizados vs excluidos.",
+
+      "agent": "qa_senior",
+      "context": ["generar_test_cases"],
+      "output_file": "output/playwright/generation-summary.md"
+    }
+  ],
+
+  // Execution process
+  "process": "sequential",
+
+  // Enable verbose logging during execution
+  "verbose": true,
+
+  // Enable crew memory — persists context and learnings across tasks
+  "memory": false,
+
+  // Runtime inputs: path to the user-story .txt file
+  // Example: crewai run  → prompts for hus if missing
+  "inputs": {
+    "hus": "input/historia_usuario.txt"
+  }
+}

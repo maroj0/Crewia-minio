@@ -1,0 +1,16 @@
+# Historia de usuario (ejemplo)
+
+Como usuario registrado
+Quiero iniciar sesión con email y contraseña
+Para acceder a mi panel privado
+
+## Criterios de aceptación
+- El usuario puede ingresar email y contraseña válidos y acceder al dashboard.
+- Si el email no existe o la contraseña es incorrecta, se muestra un mensaje de error genérico.
+- El botón "Ingresar" permanece deshabilitado hasta que email y contraseña tengan valor.
+- Tras 3 intentos fallidos consecutivos, la cuenta se bloquea temporalmente por 15 minutos.
+- Existe un enlace "Olvidé mi contraseña" que lleva al flujo de recuperación.
+
+## Notas
+- URL de login: /login
+- Roles: usuario estándar
