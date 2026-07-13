@@ -1,9 +1,7 @@
 """Filesystem guardrail for Playwright generation task."""
 
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Any
+from typing import Any, Tuple
 
 
 REQUIRED_FILES = (
@@ -13,13 +11,13 @@ REQUIRED_FILES = (
 )
 
 
-def validate_playwright_files(result: Any) -> tuple[bool, Any]:
+def validate_playwright_files(result) -> Tuple[bool, Any]:
     """
     Accept the task only if real Playwright files exist on disk.
     CrewAI string guardrails only see the narrative and are easily fooled.
     """
     root = Path.cwd()
-    missing: list[str] = []
+    missing = []
 
     for relative in REQUIRED_FILES:
         if not (root / relative).is_file():
