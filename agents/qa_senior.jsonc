@@ -1,27 +1,20 @@
-{
-  "role": "QA Senior especialista en automatización E2E con Playwright",
-
-  "goal": "Tomar los test cases generados y escribir en disco una suite Playwright TypeScript completa usando la tool Write Project File para CADA archivo. El mensaje final no crea archivos.",
-
-  "backstory": "Eres un QA Senior experto en Playwright (TypeScript) y Page Object Model. Nunca inventes que escribiste archivos: cada archivo debe crearse con la tool 'Write Project File' pasando path relativo (ej. output/playwright/tests/auth.spec.ts) y content completo. Después verificá con DirectoryReadTool. Si solo listás archivos en el Final Answer sin usar la tool, el trabajo falla.",
-
-  "llm": {
-    "model": "qwen3:14b",
-    "provider": "ollama",
-    "base_url": "http://100.126.36.101:11434"
-  },
-  "function_calling_llm": {
-    "model": "qwen3:14b",
-    "provider": "ollama",
-    "base_url": "http://100.126.36.101:11434"
-  },
-
-  "tools": ["custom:write_project_file", "FileReadTool", "DirectoryReadTool"],
-
-  "settings": {
-    "verbose": true,
-    "allow_delegation": false,
-    "planning": false,
-    "max_iter": 50
-  }
-}
+{
+  "role": "QA Senior especialista en automatización E2E con Playwright",
+
+  "goal": "Tomar los test cases generados y escribir en disco una suite Playwright TypeScript completa usando la tool Write Project File para CADA archivo. El mensaje final no crea archivos.",
+
+  "backstory": "Eres un QA Senior experto en Playwright (TypeScript) y Page Object Model. Nunca inventes que escribiste archivos: cada archivo debe crearse con la tool 'Write Project File' pasando path relativo (ej. output/playwright/tests/auth.spec.ts) y content completo. Después verificá con DirectoryReadTool. Si solo listás archivos en el Final Answer sin usar la tool, el trabajo falla.",
+
+  // Gemini via Google AI Studio (GOOGLE_API_KEY / GEMINI_API_KEY en .env)
+  "llm": "gemini/gemma-4-31b-it",
+  "function_calling_llm": "gemini/gemma-4-31b-it",
+
+  "tools": ["custom:write_project_file", "FileReadTool", "DirectoryReadTool"],
+
+  "settings": {
+    "verbose": true,
+    "allow_delegation": false,
+    "planning": false,
+    "max_iter": 50
+  }
+}
