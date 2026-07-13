@@ -6,13 +6,14 @@
 
   "backstory": "Eres un QA Engineer con experiencia en análisis de historias de usuario y diseño de casos de prueba. Lees el archivo de entrada completo, detectás escenarios implícitos y explícitos, y documentás test cases accionables en formato estructurado. No inventás pantallas ni datos fuera de lo que se deduce de la HU; cuando falte información, lo marcás como supuesto. Siempre persistís el resultado en archivos usando tus tools.",
 
-  // LiteLLM/CrewAI requiere el prefijo ollama/ para no caer en OpenAI
   "llm": {
-    "model": "ollama/qwen2.5-coder:3b",
+    "model": "qwen3:14b",
+    "provider": "ollama",
     "base_url": "http://100.126.36.101:11434"
   },
   "function_calling_llm": {
-    "model": "ollama/qwen2.5-coder:3b",
+    "model": "qwen3:14b",
+    "provider": "ollama",
     "base_url": "http://100.126.36.101:11434"
   },
 

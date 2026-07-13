@@ -6,11 +6,13 @@
   "backstory": "Eres un QA Senior experto en Playwright (TypeScript) y Page Object Model. Nunca inventes que escribiste archivos: cada archivo debe crearse con la tool 'Write Project File' pasando path relativo (ej. output/playwright/tests/auth.spec.ts) y content completo. Después verificá con DirectoryReadTool. Si solo listás archivos en el Final Answer sin usar la tool, el trabajo falla.",
 
   "llm": {
-    "model": "ollama/qwen2.5-coder:3b",
+    "model": "qwen3:14b",
+    "provider": "ollama",
     "base_url": "http://100.126.36.101:11434"
   },
   "function_calling_llm": {
-    "model": "ollama/qwen2.5-coder:3b",
+    "model": "qwen3:14b",
+    "provider": "ollama",
     "base_url": "http://100.126.36.101:11434"
   },
 
