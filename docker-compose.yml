@@ -47,6 +47,7 @@ services:
       OLLAMA_BASE_URL: http://100.126.36.101:11434
       API_BASE: http://100.126.36.101:11434
       MODEL: ollama/qwen2.5-coder:3b
+      OPENAI_API_KEY: ollama
     depends_on:
       postgres:
         condition: service_healthy

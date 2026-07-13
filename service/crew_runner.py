@@ -62,6 +62,12 @@ class CrewRunner:
     def _run_crew_sync(self, workspace: Path) -> str:
         load_dotenv(self.settings.project_root / ".env", override=True)
 
+        ollama_base = os.environ.get("OLLAMA_BASE_URL") or os.environ.get("API_BASE") or "http://100.126.36.101:11434"
+        os.environ["OLLAMA_BASE_URL"] = ollama_base
+        os.environ["API_BASE"] = ollama_base
+        os.environ.setdefault("OPENAI_API_KEY", "ollama")
+        os.environ.setdefault("MODEL", "ollama/qwen2.5-coder:3b")
+
         if self.settings.google_api_key:
             os.environ["GOOGLE_API_KEY"] = self.settings.google_api_key
         if self.settings.gemini_api_key:
