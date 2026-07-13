@@ -11,6 +11,16 @@ from service.config import Settings, get_settings
 from service.job_store import JobStatus, JobStore
 from service.minio_client import MinioStorage
 
+REQUIRED_PLAYWRIGHT_FILES = (
+    "package.json",
+    "playwright.config.ts",
+    "README.md",
+)
+
+
+class MissingPlaywrightArtifactsError(Exception):
+    """Raised when Playwright suite files are missing after crew kickoff."""
+
 
 class CrewRunner:
     def __init__(
@@ -70,6 +80,42 @@ class CrewRunner:
         finally:
             os.chdir(previous_cwd)
 
+    def _validate_playwright_artifacts(self, workspace: Path) -> None:
+        root = workspace / "output" / "playwright"
+        missing: list[str] = []
+
+        if not root.is_dir():
+            raise MissingPlaywrightArtifactsError(
+                "Missing Playwright suite: output/playwright/ directory was not created. "
+                "generation-summary.md alone does not count as generated files."
+            )
+
+        for relative in REQUIRED_PLAYWRIGHT_FILES:
+            if not (root / relative).is_file():
+                missing.append(f"output/playwright/{relative}")
+
+        specs_dir = root / "tests"
+        specs = list(specs_dir.rglob("*.spec.ts")) if specs_dir.is_dir() else []
+        if not specs:
+            missing.append("output/playwright/tests/**/*.spec.ts (at least one)")
+
+        pages_dir = root / "pages"
+        pages = list(pages_dir.rglob("*.ts")) if pages_dir.is_dir() else []
+        if not pages:
+            missing.append("output/playwright/pages/**/*.ts (at least one Page Object)")
+
+        fixtures_dir = root / "fixtures"
+        fixtures = [path for path in fixtures_dir.iterdir() if path.is_file()] if fixtures_dir.is_dir() else []
+        if not fixtures:
+            missing.append("output/playwright/fixtures/* (e.g. test-data.ts)")
+
+        if missing:
+            raise MissingPlaywrightArtifactsError(
+                "Playwright artifacts incomplete after crew run. Missing: "
+                + "; ".join(missing)
+                + ". The final narrative/summary is not enough — files must be written with FileWriterTool."
+            )
+
     def _upload_job_artifacts(self, job_id: str, workspace: Path) -> list[dict]:
         prefix = self.storage.job_prefix(job_id)
         input_file = workspace / "input" / "historia_usuario.txt"
@@ -77,7 +123,7 @@ class CrewRunner:
             self.storage.upload_file(f"{prefix}/input/historia_usuario.txt", input_file)
 
         output_dir = workspace / "output"
-        uploaded = self.storage.upload_directory(f"{prefix}/output", output_dir)
+        self.storage.upload_directory(f"{prefix}/output", output_dir)
         return self.storage.list_objects(prefix)
 
     async def run_job(self, job_id: str, user_story: str) -> None:
@@ -87,6 +133,19 @@ class CrewRunner:
             try:
                 workspace = await asyncio.to_thread(self._prepare_workspace, job_id, user_story)
                 result_summary = await asyncio.to_thread(self._run_crew_sync, workspace)
+                try:
+                    await asyncio.to_thread(self._validate_playwright_artifacts, workspace)
+                except MissingPlaywrightArtifactsError as validation_error:
+                    artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
+                    await self.job_store.update_job(
+                        job_id,
+                        status=JobStatus.FAILED,
+                        error=str(validation_error),
+                        result_summary=result_summary,
+                        artifacts=artifacts,
+                    )
+                    return
+
                 artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
                 await self.job_store.update_job(
                     job_id,
