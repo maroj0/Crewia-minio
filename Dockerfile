@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md ./
 COPY agents ./agents
 COPY knowledge ./knowledge
+COPY tools ./tools
 COPY crew.jsonc ./crew.jsonc
 COPY service ./service
 

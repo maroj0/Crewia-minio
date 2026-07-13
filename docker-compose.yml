@@ -44,6 +44,9 @@ services:
       MINIO_PRESIGN_EXPIRY_HOURS: "1"
       JOBS_WORKSPACE_ROOT: /tmp/jobs
       MAX_CONCURRENT_JOBS: "1"
+      OLLAMA_BASE_URL: http://100.126.36.101:11434
+      API_BASE: http://100.126.36.101:11434
+      MODEL: ollama/qwen2.5-coder:3b
     depends_on:
       postgres:
         condition: service_healthy

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -44,14 +45,12 @@ class CrewRunner:
         workspace.mkdir(parents=True, exist_ok=True)
 
         project_root = self.settings.project_root
-        for item in ("agents", "knowledge", "crew.jsonc"):
+        for item in ("agents", "knowledge", "tools", "crew.jsonc"):
             source = project_root / item
             target = workspace / item
             if source.is_dir():
                 shutil.copytree(source, target)
             elif source.is_file():
-                if item == "crew.jsonc":
-                    target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
 
         input_dir = workspace / "input"
@@ -71,7 +70,10 @@ class CrewRunner:
         from crewai.project.crew_loader import load_crew
 
         previous_cwd = Path.cwd()
+        previous_sys_path = list(sys.path)
         os.chdir(workspace)
+        if str(workspace) not in sys.path:
+            sys.path.insert(0, str(workspace))
         try:
             crew, default_inputs = load_crew(workspace / "crew.jsonc")
             inputs = {**default_inputs, "hus": "input/historia_usuario.txt"}
@@ -79,6 +81,7 @@ class CrewRunner:
             return str(result)
         finally:
             os.chdir(previous_cwd)
+            sys.path[:] = previous_sys_path
 
     def _validate_playwright_artifacts(self, workspace: Path) -> None:
         root = workspace / "output" / "playwright"
