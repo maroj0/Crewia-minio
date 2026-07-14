@@ -24,7 +24,7 @@ REQUIRED_FIELDS = (
 )
 
 ALLOWED_PRIORITIES = {"Alta", "Media", "Baja"}
-ALLOWED_TYPES = {"positivo", "negativo", "borde", "seguridad"}
+ALLOWED_TYPES = {"positivo", "negativo", "borde", "seguridad", "accesibilidad"}
 ID_PATTERN = re.compile(r"^TC-\d{3,}$")
 
 
