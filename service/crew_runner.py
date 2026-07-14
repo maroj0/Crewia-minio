@@ -31,6 +31,10 @@ class MissingPlaywrightArtifactsError(Exception):
     """Raised when Playwright suite files are missing after crew kickoff."""
 
 
+class MissingTestCasesArtifactsError(Exception):
+    """Raised when test-cases catalog files are missing or invalid after crew kickoff."""
+
+
 class CrewRunner:
     def __init__(
         self,
@@ -193,6 +197,27 @@ class CrewRunner:
             written.append(relative)
         return written
 
+    def _validate_test_cases_artifacts(self, workspace: Path) -> None:
+        from tools.test_cases_guardrail import validate_test_cases_files
+
+        json_path = workspace / "output" / "test-cases" / "test-cases.json"
+        md_path = workspace / "output" / "test-cases" / "test-cases.md"
+        if not json_path.is_file() or not md_path.is_file():
+            raise MissingTestCasesArtifactsError(
+                "Missing test-cases artifacts: required output/test-cases/test-cases.json "
+                "and output/test-cases/test-cases.md."
+            )
+
+        original_cwd = Path.cwd()
+        try:
+            os.chdir(workspace)
+            ok, detail = validate_test_cases_files(None)
+        finally:
+            os.chdir(original_cwd)
+
+        if not ok:
+            raise MissingTestCasesArtifactsError(str(detail))
+
     def _validate_playwright_artifacts(self, workspace: Path) -> None:
         root = workspace / "output" / "playwright"
         missing: list[str] = []
@@ -258,8 +283,9 @@ class CrewRunner:
                     )
 
                 try:
+                    await asyncio.to_thread(self._validate_test_cases_artifacts, workspace)
                     await asyncio.to_thread(self._validate_playwright_artifacts, workspace)
-                except MissingPlaywrightArtifactsError as validation_error:
+                except (MissingTestCasesArtifactsError, MissingPlaywrightArtifactsError) as validation_error:
                     artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
                     await self.job_store.update_job(
                         job_id,
@@ -287,6 +313,7 @@ class CrewRunner:
                             workspace,
                             summary_file.read_text(encoding="utf-8"),
                         )
+                    await asyncio.to_thread(self._validate_test_cases_artifacts, workspace)
                     await asyncio.to_thread(self._validate_playwright_artifacts, workspace)
                     artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
                     await self.job_store.update_job(

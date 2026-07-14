@@ -12,7 +12,10 @@
 
       "description": "Lee el archivo de historia de usuario indicado en {hus} usando FileReadTool. Analiza la HU completa (descripción, criterios de aceptación, reglas, actores, precondiciones y flujos). Diseña TODOS los test cases razonables que surjan: camino feliz, validaciones, errores, bordes, estados vacíos, permisos/roles si aplica, y regresiones mínimas del flujo. Persistí el resultado en archivos bajo output/test-cases/ usando FileWriterTool:\n1) output/test-cases/test-cases.md — catálogo legible de todos los casos\n2) output/test-cases/test-cases.json — misma información estructurada para automatización\nCada caso debe incluir: id (TC-XXX), título, prioridad (Alta/Media/Baja), tipo (positivo/negativo/borde), precondiciones, pasos numerados, datos de prueba, resultado esperado, y si es candidato a automatización E2E (sí/no + motivo).",
 
-      "expected_output": "Archivos creados en output/test-cases/ con al menos:\n- test-cases.md: listado completo de casos con id, título, prioridad, tipo, precondiciones, pasos, datos y resultado esperado.\n- test-cases.json: array JSON de objetos con los mismos campos (id, title, priority, type, preconditions, steps, test_data, expected_result, automatable, automation_notes).\nDebe haber cobertura amplia de la HU (feliz, negativo y borde). El mensaje final debe confirmar las rutas de los archivos escritos y el total de test cases generados.",
+      "expected_output": "Archivos REALES en disco bajo output/test-cases/:\n- test-cases.md (catálogo legible)\n- test-cases.json: array JSON no vacío; cada elemento con EXACTAMENTE estos campos:\n  id (TC-XXX), title, priority (Alta|Media|Baja), type (positivo|negativo|borde|seguridad), preconditions, steps (array de strings), test_data (objeto), expected_result, automatable (sí|no), automation_notes.\nUna narrativa sin archivos en disco es inválida.",
+
+      "guardrail": {"python": "tools.test_cases_guardrail.validate_test_cases_files"},
+      "guardrail_max_retries": 3,
 
       "agent": "qa_engineer",
       "output_file": "output/test-cases/summary.md"
@@ -25,6 +28,7 @@
       "expected_output": "Archivos REALES en disco bajo output/playwright/ (package.json, playwright.config.ts, fixtures, pages, tests/*.spec.ts, README, EXCLUSIONES). El mensaje final solo resume rutas ya escritas con Write Project File. Una lista narrativa sin archivos en disco es inválida.",
 
       "guardrail": {"python": "tools.playwright_guardrail.validate_playwright_files"},
+      "guardrail_max_retries": 3,
 
       "agent": "qa_senior",
       "context": ["generar_test_cases"],
