@@ -47,7 +47,7 @@ class MinioStorage:
     def upload_text(self, key: str, text: str, content_type: str = "text/plain; charset=utf-8") -> str:
         return self.upload_bytes(key, text.encode("utf-8"), content_type=content_type)
 
-    def upload_json(self, key: str, payload: dict) -> str:
+    def upload_json(self, key: str, payload: dict | list) -> str:
         data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
         return self.upload_bytes(key, data, content_type="application/json")
 

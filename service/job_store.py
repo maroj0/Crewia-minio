@@ -29,6 +29,10 @@ class JobRecord:
     error: str | None = None
     result_summary: str | None = None
     artifacts: list[dict] = field(default_factory=list)
+    base_url: str | None = None
+    frontend: bool = True
+    backend: bool = False
+    endpoints: list[dict] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +44,10 @@ class JobRecord:
             "error": self.error,
             "result_summary": self.result_summary,
             "artifacts": self.artifacts,
+            "base_url": self.base_url,
+            "frontend": self.frontend,
+            "backend": self.backend,
+            "endpoints": self.endpoints,
         }
 
     @classmethod
@@ -53,6 +61,10 @@ class JobRecord:
             error=row.error,
             result_summary=row.result_summary,
             artifacts=row.artifacts or [],
+            base_url=getattr(row, "base_url", None),
+            frontend=bool(getattr(row, "frontend", True)),
+            backend=bool(getattr(row, "backend", False)),
+            endpoints=getattr(row, "endpoints", None),
         )
 
 
@@ -76,7 +88,15 @@ class JobStore:
     def initialize(self) -> None:
         init_db(self._engine)
 
-    def _create_job_sync(self, user_story: str) -> JobRecord:
+    def _create_job_sync(
+        self,
+        user_story: str,
+        *,
+        base_url: str | None = None,
+        frontend: bool = True,
+        backend: bool = False,
+        endpoints: list[dict] | None = None,
+    ) -> JobRecord:
         job_id = str(uuid4())
         now = _utc_now()
         with self._session_factory() as session:
@@ -84,6 +104,10 @@ class JobStore:
                 job_id=job_id,
                 status=JobStatus.PENDING.value,
                 user_story=user_story,
+                base_url=base_url,
+                frontend=frontend,
+                backend=backend,
+                endpoints=endpoints,
                 created_at=now,
                 updated_at=now,
                 artifacts=[],
@@ -130,9 +154,24 @@ class JobStore:
             total = session.scalar(count_query) or 0
             return [JobRecord.from_row(row) for row in rows], total
 
-    async def create_job(self, user_story: str) -> JobRecord:
+    async def create_job(
+        self,
+        user_story: str,
+        *,
+        base_url: str | None = None,
+        frontend: bool = True,
+        backend: bool = False,
+        endpoints: list[dict] | None = None,
+    ) -> JobRecord:
         async with self._lock:
-            return await asyncio.to_thread(self._create_job_sync, user_story)
+            return await asyncio.to_thread(
+                self._create_job_sync,
+                user_story,
+                base_url=base_url,
+                frontend=frontend,
+                backend=backend,
+                endpoints=endpoints,
+            )
 
     async def get_job(self, job_id: str) -> JobRecord | None:
         return await asyncio.to_thread(self._get_job_sync, job_id)

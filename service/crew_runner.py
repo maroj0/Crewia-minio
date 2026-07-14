@@ -14,12 +14,6 @@ from service.config import Settings, get_settings
 from service.job_store import JobStatus, JobStore
 from service.minio_client import MinioStorage
 
-REQUIRED_PLAYWRIGHT_FILES = (
-    "package.json",
-    "playwright.config.ts",
-    "README.md",
-)
-
 WRITE_TOOL_NAMES = {
     "write_project_file",
     "Write Project File",
@@ -50,7 +44,16 @@ class CrewRunner:
     def _job_workspace(self, job_id: str) -> Path:
         return self.settings.jobs_workspace_root / job_id
 
-    def _prepare_workspace(self, job_id: str, user_story: str) -> Path:
+    def _prepare_workspace(
+        self,
+        job_id: str,
+        user_story: str,
+        *,
+        base_url: str | None = None,
+        frontend: bool = True,
+        backend: bool = False,
+        endpoints: list[dict] | None = None,
+    ) -> Path:
         workspace = self._job_workspace(job_id)
         if workspace.exists():
             shutil.rmtree(workspace)
@@ -68,16 +71,47 @@ class CrewRunner:
         input_dir = workspace / "input"
         input_dir.mkdir(parents=True, exist_ok=True)
         (input_dir / "historia_usuario.txt").write_text(user_story, encoding="utf-8")
+
+        resolved_base = (base_url or "").strip() or "http://localhost:3000"
+        job_config = {
+            "base_url": base_url,
+            "frontend": frontend,
+            "backend": backend,
+            "base_url_or_default": resolved_base,
+            "endpoints_count": len(endpoints or []),
+        }
+        (input_dir / "job_config.json").write_text(
+            json.dumps(job_config, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        if endpoints:
+            (input_dir / "endpoints.json").write_text(
+                json.dumps(endpoints, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
         (workspace / "output").mkdir(parents=True, exist_ok=True)
         return workspace
 
-    def _run_crew_sync(self, workspace: Path) -> str:
+    def _run_crew_sync(
+        self,
+        workspace: Path,
+        *,
+        base_url: str | None = None,
+        frontend: bool = True,
+        backend: bool = False,
+        endpoints: list[dict] | None = None,
+    ) -> str:
         load_dotenv(self.settings.project_root / ".env", override=True)
 
         if self.settings.google_api_key:
             os.environ["GOOGLE_API_KEY"] = self.settings.google_api_key
         if self.settings.gemini_api_key:
             os.environ["GEMINI_API_KEY"] = self.settings.gemini_api_key
+
+        resolved_base = (base_url or "").strip() or "http://localhost:3000"
+        if base_url:
+            os.environ["BASE_URL"] = resolved_base
 
         from crewai.project.crew_loader import load_crew
 
@@ -88,7 +122,16 @@ class CrewRunner:
             sys.path.insert(0, str(workspace))
         try:
             crew, default_inputs = load_crew(workspace / "crew.jsonc")
-            inputs = {**default_inputs, "hus": "input/historia_usuario.txt"}
+            inputs = {
+                **default_inputs,
+                "hus": "input/historia_usuario.txt",
+                "base_url": base_url or "",
+                "frontend": "true" if frontend else "false",
+                "backend": "true" if backend else "false",
+                "base_url_or_default": resolved_base,
+                "endpoints_file": "input/endpoints.json" if endpoints else "",
+                "endpoints_count": str(len(endpoints or [])),
+            }
             result = crew.kickoff(inputs=inputs)
             return str(result)
         finally:
@@ -219,46 +262,26 @@ class CrewRunner:
             raise MissingTestCasesArtifactsError(str(detail))
 
     def _validate_playwright_artifacts(self, workspace: Path) -> None:
-        root = workspace / "output" / "playwright"
-        missing: list[str] = []
+        from tools.playwright_guardrail import validate_playwright_files
 
-        if not root.is_dir():
-            raise MissingPlaywrightArtifactsError(
-                "Missing Playwright suite: output/playwright/ directory was not created. "
-                "generation-summary.md alone does not count as generated files."
-            )
+        original_cwd = Path.cwd()
+        try:
+            os.chdir(workspace)
+            ok, detail = validate_playwright_files(None)
+        finally:
+            os.chdir(original_cwd)
 
-        for relative in REQUIRED_PLAYWRIGHT_FILES:
-            if not (root / relative).is_file():
-                missing.append(f"output/playwright/{relative}")
-
-        specs_dir = root / "tests"
-        specs = list(specs_dir.rglob("*.spec.ts")) if specs_dir.is_dir() else []
-        if not specs:
-            missing.append("output/playwright/tests/**/*.spec.ts (at least one)")
-
-        pages_dir = root / "pages"
-        pages = list(pages_dir.rglob("*.ts")) if pages_dir.is_dir() else []
-        if not pages:
-            missing.append("output/playwright/pages/**/*.ts (at least one Page Object)")
-
-        fixtures_dir = root / "fixtures"
-        fixtures = [path for path in fixtures_dir.iterdir() if path.is_file()] if fixtures_dir.is_dir() else []
-        if not fixtures:
-            missing.append("output/playwright/fixtures/* (e.g. test-data.ts)")
-
-        if missing:
-            raise MissingPlaywrightArtifactsError(
-                "Playwright artifacts incomplete after crew run. Missing: "
-                + "; ".join(missing)
-                + ". The final narrative/summary is not enough — files must be written with tools."
-            )
+        if not ok:
+            raise MissingPlaywrightArtifactsError(str(detail))
 
     def _upload_job_artifacts(self, job_id: str, workspace: Path) -> list[dict]:
         prefix = self.storage.job_prefix(job_id)
-        input_file = workspace / "input" / "historia_usuario.txt"
-        if input_file.exists():
-            self.storage.upload_file(f"{prefix}/input/historia_usuario.txt", input_file)
+        input_dir = workspace / "input"
+        if input_dir.is_dir():
+            for path in input_dir.rglob("*"):
+                if path.is_file():
+                    relative = path.relative_to(workspace).as_posix()
+                    self.storage.upload_file(f"{prefix}/{relative}", path)
 
         output_dir = workspace / "output"
         self.storage.upload_directory(f"{prefix}/output", output_dir)
@@ -268,9 +291,29 @@ class CrewRunner:
         async with self._semaphore:
             await self.job_store.update_job(job_id, status=JobStatus.RUNNING)
             workspace = self._job_workspace(job_id)
+            record = await self.job_store.get_job(job_id)
+            base_url = record.base_url if record else None
+            frontend = record.frontend if record else True
+            backend = record.backend if record else False
+            endpoints = record.endpoints if record else None
             try:
-                workspace = await asyncio.to_thread(self._prepare_workspace, job_id, user_story)
-                result_summary = await asyncio.to_thread(self._run_crew_sync, workspace)
+                workspace = await asyncio.to_thread(
+                    self._prepare_workspace,
+                    job_id,
+                    user_story,
+                    base_url=base_url,
+                    frontend=frontend,
+                    backend=backend,
+                    endpoints=endpoints,
+                )
+                result_summary = await asyncio.to_thread(
+                    self._run_crew_sync,
+                    workspace,
+                    base_url=base_url,
+                    frontend=frontend,
+                    backend=backend,
+                    endpoints=endpoints,
+                )
 
                 # Small models often dump tool calls as JSON text instead of invoking tools.
                 await asyncio.to_thread(self._materialize_writes_from_text, workspace, result_summary)

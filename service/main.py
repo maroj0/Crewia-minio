@@ -32,11 +32,12 @@ API_DESCRIPTION = """
 API para generar test cases y automatizaciones Playwright a partir de historias de usuario.
 
 ## Flujo
-1. **POST /api/v1/jobs** — envía la historia de usuario y recibe un `job_id`.
+1. **POST /api/v1/jobs** — envía la HU + opciones (`base_url`, `frontend`, `backend`, `endpoints`) y recibe un `job_id`.
 2. **GET /api/v1/jobs/{job_id}** — consulta el estado del job.
 3. **GET /api/v1/jobs/{job_id}/artifacts** — lista archivos generados en MinIO.
-4. **POST /api/v1/jobs/{job_id}/retry** — reintenta un job fallido con la misma HU.
+4. **POST /api/v1/jobs/{job_id}/retry** — reintenta un job fallido con la misma HU y opciones.
 
+Si `backend=true`, el body **debe** incluir `endpoints` (lista de APIs a probar).
 Los jobs se ejecutan de forma asíncrona. Metadata en PostgreSQL, archivos en MinIO.
 """
 
@@ -88,6 +89,10 @@ def _to_job_response(record) -> JobResponse:
         error=record.error,
         result_summary=record.result_summary,
         artifacts=[ArtifactInfo(**artifact) for artifact in record.artifacts],
+        base_url=record.base_url,
+        frontend=record.frontend,
+        backend=record.backend,
+        endpoints=record.endpoints,
     )
 
 
@@ -107,18 +112,36 @@ async def health() -> dict[str, str]:
 )
 async def create_job(request: CreateJobRequest, background_tasks: BackgroundTasks) -> JobResponse:
     """
-    Recibe una historia de usuario en JSON y dispara el crew de CrewAI en background.
+    Recibe una historia de usuario y opciones de testing, y dispara el crew en background.
 
-    El crew genera test cases y automatizaciones Playwright. Usá el `job_id` devuelto
-    para consultar el progreso.
+    - `base_url` (opcional): ambiente para Playwright (`baseURL`).
+    - `frontend` / `backend`: al menos uno debe ser true; define el alcance de casos y automatizaciones.
+    - `endpoints` (obligatorio si `backend=true`): lista de endpoints API a cubrir.
     """
-    record = await job_store.create_job(request.user_story)
+    endpoints_payload = (
+        [endpoint.model_dump(mode="json") for endpoint in request.endpoints]
+        if request.endpoints
+        else None
+    )
+    record = await job_store.create_job(
+        request.user_story,
+        base_url=request.base_url,
+        frontend=request.frontend,
+        backend=request.backend,
+        endpoints=endpoints_payload,
+    )
     prefix = storage.job_prefix(record.job_id)
     await asyncio.to_thread(
         storage.upload_text,
         f"{prefix}/input/historia_usuario.txt",
         request.user_story,
     )
+    if endpoints_payload is not None:
+        await asyncio.to_thread(
+            storage.upload_json,
+            f"{prefix}/input/endpoints.json",
+            endpoints_payload,
+        )
     background_tasks.add_task(crew_runner.run_job, record.job_id, request.user_story)
     return _to_job_response(record)
 
@@ -173,7 +196,7 @@ async def get_job(job_id: str) -> JobResponse:
 )
 async def retry_job(job_id: str, background_tasks: BackgroundTasks) -> JobResponse:
     """
-    Reintenta un job en estado `failed` usando la misma historia de usuario guardada.
+    Reintenta un job en estado `failed` usando la misma historia de usuario y opciones guardadas.
 
     Reinicia el estado a `pending`, limpia error/resultados previos y vuelve a
     ejecutar el crew en background con el mismo `job_id`.

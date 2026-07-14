@@ -1,53 +1,52 @@
-{
-  // Display name for this crew
-  "name": "qa",
-
-  // Agents to include — each must have a matching agents/<name>.jsonc file
-  "agents": ["qa_engineer", "qa_senior"],
-
-  // Task definitions — executed in order for sequential process
-  "tasks": [
-    {
-      "name": "generar_test_cases",
-
-      "description": "Lee el archivo de historia de usuario indicado en {hus} usando FileReadTool. Analiza la HU completa (descripción, criterios de aceptación, reglas, actores, precondiciones y flujos). Diseña TODOS los test cases razonables que surjan: camino feliz, validaciones, errores, bordes, estados vacíos, permisos/roles si aplica, y regresiones mínimas del flujo. Persistí el resultado en archivos bajo output/test-cases/ usando FileWriterTool:\n1) output/test-cases/test-cases.md — catálogo legible de todos los casos\n2) output/test-cases/test-cases.json — misma información estructurada para automatización\nCada caso debe incluir: id (TC-XXX), título, prioridad (Alta/Media/Baja), tipo (positivo/negativo/borde), precondiciones, pasos numerados, datos de prueba, resultado esperado, y si es candidato a automatización E2E (sí/no + motivo).",
-
-      "expected_output": "Archivos REALES en disco bajo output/test-cases/:\n- test-cases.md (catálogo legible)\n- test-cases.json: array JSON no vacío; cada elemento con EXACTAMENTE estos campos:\n  id (TC-XXX), title, priority (Alta|Media|Baja), type (positivo|negativo|borde|seguridad), preconditions, steps (array de strings), test_data (objeto), expected_result, automatable (sí|no), automation_notes.\nUna narrativa sin archivos en disco es inválida.",
-
-      "guardrail": {"python": "tools.test_cases_guardrail.validate_test_cases_files"},
-      "guardrail_max_retries": 3,
-
-      "agent": "qa_engineer",
-      "output_file": "output/test-cases/summary.md"
-    },
-    {
-      "name": "generar_automatizaciones_playwright",
-
-      "description": "Usá el resultado de la task generar_test_cases (leé output/test-cases/test-cases.json con FileReadTool). Generá una suite Playwright TypeScript bajo output/playwright/.\n\nREGLA ABSOLUTA: el Final Answer NO escribe archivos. Debés llamar la tool 'Write Project File' UNA VEZ POR ARCHIVO con:\n- path: ruta relativa completa (ej. output/playwright/package.json)\n- content: contenido completo del archivo\n\nArchivos mínimos obligatorios (todos vía Write Project File):\n1) output/playwright/package.json\n2) output/playwright/playwright.config.ts\n3) output/playwright/fixtures/test-data.ts\n4) al menos un output/playwright/pages/*Page.ts\n5) al menos un output/playwright/tests/*.spec.ts\n6) output/playwright/README.md\n7) output/playwright/EXCLUSIONES.md\n\nPreferí getByRole/getByLabel/getByTestId. BASE_URL = process.env.BASE_URL || 'http://localhost:3000'.\nAntes de terminar, DirectoryReadTool sobre output/playwright y subcarpetas para verificar que existen.",
-
-      "expected_output": "Archivos REALES en disco bajo output/playwright/ (package.json, playwright.config.ts, fixtures, pages, tests/*.spec.ts, README, EXCLUSIONES). El mensaje final solo resume rutas ya escritas con Write Project File. Una lista narrativa sin archivos en disco es inválida.",
-
-      "guardrail": {"python": "tools.playwright_guardrail.validate_playwright_files"},
-      "guardrail_max_retries": 3,
-
-      "agent": "qa_senior",
-      "context": ["generar_test_cases"],
-      "output_file": "output/playwright/generation-summary.md"
-    }
-  ],
-
-  // Execution process
-  "process": "sequential",
-
-  // Enable verbose logging during execution
-  "verbose": true,
-
-  // Enable crew memory — persists context and learnings across tasks
-  "memory": false,
-
-  // Runtime inputs: path to the user-story .txt file
-  // Example: crewai run  → prompts for hus if missing
-  "inputs": {
-    "hus": "input/historia_usuario.txt"
-  }
-}
+{
+  // Display name for this crew
+  "name": "qa",
+
+  // Agents to include — each must have a matching agents/<name>.jsonc file
+  "agents": ["qa_engineer", "qa_senior"],
+
+  // Task definitions — executed in order for sequential process
+  "tasks": [
+    {
+      "name": "generar_test_cases",
+
+      "description": "Lee el archivo de historia de usuario indicado en {hus} usando FileReadTool. También leé input/job_config.json (frontend={frontend}, backend={backend}, base_url={base_url}).\nSi backend=true y existe {endpoints_file}, leé ESA lista con FileReadTool: son los endpoints oficiales a cubrir (method, path, body, headers, expected_status, auth_required). Generá casos para CADA endpoint (feliz, negativo, auth si aplica) además de lo que surja de la HU.\nAlcance:\n- frontend=true: UI (pantallas, formularios, navegación, validaciones visuales).\n- backend=true: API/contratos basados en {endpoints_file} + HU.\n- ambos: cubrí ambos planos.\nPersistí con FileWriterTool:\n1) output/test-cases/test-cases.md\n2) output/test-cases/test-cases.json\nCada caso: id (TC-XXX), title, priority (Alta/Media/Baja), type (positivo/negativo/borde/seguridad), preconditions, steps, test_data, expected_result, automatable (sí/no), automation_notes.",
+
+      "expected_output": "Archivos REALES en disco bajo output/test-cases/:\n- test-cases.md\n- test-cases.json: array no vacío con campos id, title, priority, type, preconditions, steps, test_data, expected_result, automatable, automation_notes.\nSi backend=true, debe haber cobertura explícita de los endpoints de input/endpoints.json.",
+
+      "guardrail": {"python": "tools.test_cases_guardrail.validate_test_cases_files"},
+      "guardrail_max_retries": 3,
+
+      "agent": "qa_engineer",
+      "output_file": "output/test-cases/summary.md"
+    },
+    {
+      "name": "generar_automatizaciones_playwright",
+
+      "description": "Usá output/test-cases/test-cases.json, input/job_config.json y, si backend=true, {endpoints_file}.\nAlcance: frontend={frontend}, backend={backend}.\nBASE_URL: {base_url} (si vacío → http://localhost:3000). En playwright.config.ts: use.baseURL = process.env.BASE_URL || '{base_url_or_default}'.\n\nREGLA ABSOLUTA: el Final Answer NO escribe archivos. Llamá 'Write Project File' UNA VEZ POR ARCHIVO (path relativo + content completo).\n\nObligatorios:\n1) output/playwright/package.json\n2) output/playwright/playwright.config.ts\n3) output/playwright/fixtures/test-data.ts (incluí datos de endpoints si backend)\n4) output/playwright/README.md\n5) output/playwright/EXCLUSIONES.md\nAdemás:\n- frontend=true: pages/*Page.ts + tests UI *.spec.ts (getByRole/getByLabel/getByTestId).\n- backend=true: tests/api/*.spec.ts con Playwright request; un spec (o describe) por endpoint de input/endpoints.json using method/path/body/expected_status.\n- ambos: generá ambos.\nVerificá con DirectoryReadTool al final.",
+
+      "expected_output": "Archivos REALES en disco bajo output/playwright/ acorde a frontend/backend. Si backend=true, debe existir coverage de los endpoints de input/endpoints.json en tests/api.",
+
+      "guardrail": {"python": "tools.playwright_guardrail.validate_playwright_files"},
+      "guardrail_max_retries": 3,
+
+      "agent": "qa_senior",
+      "context": ["generar_test_cases"],
+      "output_file": "output/playwright/generation-summary.md"
+    }
+  ],
+
+  "process": "sequential",
+  "verbose": true,
+  "memory": false,
+
+  "inputs": {
+    "hus": "input/historia_usuario.txt",
+    "base_url": "",
+    "frontend": "true",
+    "backend": "false",
+    "base_url_or_default": "http://localhost:3000",
+    "endpoints_file": "",
+    "endpoints_count": "0"
+  }
+}
