@@ -241,7 +241,9 @@ class CrewRunner:
         return written
 
     def _validate_test_cases_artifacts(self, workspace: Path) -> None:
-        from tools.test_cases_guardrail import validate_test_cases_files
+        from tools.test_cases_guardrail import ensure_test_cases_md, validate_test_cases_files
+
+        ensure_test_cases_md(workspace)
 
         json_path = workspace / "output" / "test-cases" / "test-cases.json"
         md_path = workspace / "output" / "test-cases" / "test-cases.md"
