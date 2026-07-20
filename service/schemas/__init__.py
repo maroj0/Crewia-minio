@@ -1,3 +1,4 @@
+from service.schemas.backlog import BacklogJobInputs, CreateBacklogJobRequest
 from service.schemas.common import (
     ArtifactInfo,
     ArtifactsResponse,
@@ -15,6 +16,8 @@ __all__ = [
     "ApiEndpoint",
     "ArtifactInfo",
     "ArtifactsResponse",
+    "BacklogJobInputs",
+    "CreateBacklogJobRequest",
     "CreateJobRequest",
     "CreateQaJobRequest",
     "CreateSddJobRequest",

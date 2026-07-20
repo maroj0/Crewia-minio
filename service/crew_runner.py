@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from service.config import Settings, get_settings
 from service.flow_registry import (
+    MissingBacklogArtifactsError,
     MissingPlaywrightArtifactsError,
     MissingTestCasesArtifactsError,
     get_flow,
@@ -156,6 +157,21 @@ class CrewRunner:
                 self._install_bundled_crew(workspace, flow_def.crew_file)
                 local_paths = self._download_sdd_documents(workspace, flow_inputs)
                 job_config["sdd_local_paths"] = local_paths
+        elif flow == "backlog":
+            self._install_bundled_crew(workspace, flow_def.crew_file)
+            funcional_ref = flow_inputs.get("funcional_minio_path", "")
+            if funcional_ref:
+                funcional_filename = self.storage.local_name_from_ref(funcional_ref, "funcional")
+                self.storage.download_object(funcional_ref, input_dir / funcional_filename)
+                job_config["funcional_file"] = f"input/{funcional_filename}"
+
+            epics_ref = (flow_inputs.get("epics_minio_path") or "").strip()
+            if epics_ref:
+                epics_filename = self.storage.local_name_from_ref(epics_ref, "epics.md")
+                self.storage.download_object(epics_ref, input_dir / epics_filename)
+                job_config["epics_file"] = f"input/{epics_filename}"
+            else:
+                job_config["epics_file"] = ""
         else:
             self._install_bundled_crew(workspace, flow_def.crew_file)
 
@@ -200,6 +216,23 @@ class CrewRunner:
                 "tasks_file": local_paths.get("tasks", "input/tasks"),
             }
 
+        if flow == "backlog":
+            job_config_path = workspace / "input" / "job_config.json"
+            job_config = json.loads(job_config_path.read_text(encoding="utf-8"))
+            generate_epics = flow_inputs.get("generate_epics", True)
+            generate_hus = flow_inputs.get("generate_hus", False)
+            return {
+                "funcional_file": job_config.get("funcional_file", ""),
+                "epics_file": job_config.get("epics_file", ""),
+                "epicas_seleccionadas": flow_inputs.get("epicas_seleccionadas", "TODAS"),
+                "sistema": flow_inputs.get("sistema", "el sistema descrito en el documento funcional"),
+                "generar_epicas": "true" if generate_epics else "false",
+                "generar_hus": "true" if generate_hus else "false",
+                # filled by before_kickoff callback — placeholders so kickoff inputs are complete
+                "funcional_text": "",
+                "epics_text": "",
+            }
+
         return {}
 
     def _run_crew_sync(self, record: JobRecord, workspace: Path) -> str:
@@ -216,6 +249,12 @@ class CrewRunner:
             resolved_base = (base_url or "").strip() or "http://localhost:3000"
             if base_url:
                 os.environ["BASE_URL"] = resolved_base
+
+        if record.flow == "backlog":
+            # ConditionalTask conditions (conditions/flags.py) read these env vars.
+            # Safe under the existing semaphore (max_concurrent_jobs=1 default).
+            os.environ["GENERATE_EPICS"] = "true" if flow_inputs.get("generate_epics", True) else "false"
+            os.environ["GENERATE_HUS"] = "true" if flow_inputs.get("generate_hus", False) else "false"
 
         from crewai.project.crew_loader import load_crew
 
@@ -377,7 +416,7 @@ class CrewRunner:
 
                 try:
                     await asyncio.to_thread(self._run_post_validators, flow, workspace)
-                except (MissingTestCasesArtifactsError, MissingPlaywrightArtifactsError) as validation_error:
+                except (MissingTestCasesArtifactsError, MissingPlaywrightArtifactsError, MissingBacklogArtifactsError) as validation_error:
                     artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
                     await self.job_store.update_job(
                         job_id,

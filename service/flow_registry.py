@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+from service.schemas.backlog import CreateBacklogJobRequest
 from service.schemas.qa import CreateQaJobRequest
 from service.schemas.sdd import CreateSddJobRequest
 
@@ -19,6 +20,10 @@ class MissingPlaywrightArtifactsError(Exception):
 
 class MissingTestCasesArtifactsError(Exception):
     """Raised when test-cases catalog files are missing or invalid after crew kickoff."""
+
+
+class MissingBacklogArtifactsError(Exception):
+    """Raised when expected backlog output files (epics.md, hus.md) are missing after crew kickoff."""
 
 
 def _validate_qa_test_cases_artifacts(workspace: Path) -> None:
@@ -45,6 +50,33 @@ def _validate_qa_test_cases_artifacts(workspace: Path) -> None:
 
     if not ok:
         raise MissingTestCasesArtifactsError(str(detail))
+
+
+def _validate_backlog_artifacts(workspace: Path) -> None:
+    import json
+
+    job_config_path = workspace / "input" / "job_config.json"
+    job_config = json.loads(job_config_path.read_text(encoding="utf-8"))
+    flow_inputs = job_config.get("flow_inputs", {})
+
+    generate_epics = flow_inputs.get("generate_epics", True)
+    generate_hus = flow_inputs.get("generate_hus", False)
+
+    missing: list[str] = []
+    if generate_epics:
+        path = workspace / "output" / "epics.md"
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            missing.append("epics.md")
+    if generate_hus:
+        path = workspace / "output" / "hus.md"
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            missing.append("hus.md")
+
+    if missing:
+        raise MissingBacklogArtifactsError(
+            f"Backlog artifacts faltantes o vacíos: {', '.join(missing)}. "
+            "La corrida del LLM no emitió el delimitador === FILE: === esperado."
+        )
 
 
 def _validate_qa_playwright_artifacts(workspace: Path) -> None:
@@ -116,6 +148,19 @@ _FLOWS: dict[str, FlowDefinition] = {
         optional_fields=[],
         post_run_validators=[],
         uses_custom_crew=True,
+    ),
+    "backlog": FlowDefinition(
+        id="backlog",
+        name="Backlog Generator (Épicas e HUs)",
+        description=(
+            "Genera épicas e historias de usuario a partir de un documento funcional en MinIO. "
+            "Permite generar solo épicas, solo HUs (desde un epics.md previo), o ambas en una corrida."
+        ),
+        crew_file="crews/stories.jsonc",
+        request_model=CreateBacklogJobRequest,
+        required_fields=["funcional_minio_path"],
+        optional_fields=["generate_epics", "generate_hus", "epics_minio_path", "epicas_seleccionadas", "sistema"],
+        post_run_validators=[_validate_backlog_artifacts],
     ),
 }
 

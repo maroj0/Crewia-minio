@@ -1,0 +1,114 @@
+{
+  // ============================================================
+  // BACKLOG GENERATOR — Épicas e Historias de Usuario desde el
+  // documento funcional, controlado por flags para exponerlo
+  // detrás de un endpoint.
+  //
+  // Flags (variables de entorno seteadas por el endpoint antes
+  // del kickoff; ver conditions/flags.py):
+  //   GENERATE_EPICS = true|false  -> corre generar_epicas_task
+  //   GENERATE_HUS   = true|false  -> corre generar_hus_task
+  //
+  // Reglas de negocio del flujo:
+  //   - HUs requiere épicas: o epics_text viene cargado (epics.md
+  //     de una corrida previa, bajado de MinIO), o GENERATE_EPICS
+  //     también está activo en esta corrida (la tarea de HUs usa
+  //     el output de la de épicas vía context).
+  //   - {epicas_seleccionadas}: "TODAS" (default) o lista de IDs
+  //     o nombres separados por coma (ej: "EP-001, EP-004").
+  //
+  // Outputs (convención === FILE: === para callbacks.save_output):
+  //   generar_epicas_task -> epics.md
+  //   generar_hus_task    -> hus.md
+  //
+  // NOTA CrewAI: una ConditionalTask no puede ser la primera tarea
+  // del crew; por eso existe validar_entradas_task, que además
+  // valida la coherencia de los flags y entradas.
+  // ============================================================
+
+  "name": "backlog-generator",
+
+  "agents": ["pm_gestor_de_producto"],
+
+  "tasks": [
+
+    // ------------------------------------------------------------
+    // T0 — VALIDACIÓN DE ENTRADAS (siempre corre)
+    // ------------------------------------------------------------
+    {
+      "name": "validar_entradas_task",
+      "description": "Validá las entradas de esta corrida del generador de backlog de {sistema} y dejá un resumen de contexto para las tareas siguientes.\n\nFLAGS DE LA CORRIDA:\n- Generar épicas: {generar_epicas}\n- Generar historias de usuario: {generar_hus}\n- Épicas seleccionadas para HUs: {epicas_seleccionadas}\n\nDOCUMENTO FUNCIONAL ({funcional_file}) — primeros caracteres para verificación:\n---\n{funcional_text}\n---\n\nEPICS.MD PREVIO ({epics_file}) — vacío si no se proporcionó:\n---\n{epics_text}\n---\n\nVerificá y reportá: (1) si el documento funcional tiene contenido real (no vacío ni ilegible); (2) si se pidieron HUs, que exista una fuente de épicas: epics_text con contenido O generación de épicas activada en esta corrida — si no se cumple, declaralo como ERROR DE CONFIGURACIÓN explicando que primero debe correrse el flujo con épicas; (3) si {epicas_seleccionadas} no es 'TODAS', que los IDs/nombres mencionados existan en la fuente de épicas disponible (si la fuente es la generación de esta misma corrida, indicá que se validará al generar). Cerrá con una sección 'CONTEXTO PARA TAREAS SIGUIENTES' resumiendo qué se va a generar y desde qué fuente. Todo en español. NO uses el delimitador === FILE: ===.",
+      "expected_output": "Informe breve en español con el resultado de las tres validaciones (OK o ERROR DE CONFIGURACIÓN con explicación) y la sección 'CONTEXTO PARA TAREAS SIGUIENTES'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "pm_gestor_de_producto"
+    },
+
+    // ------------------------------------------------------------
+    // T1 — ÉPICAS (condicional: GENERATE_EPICS)
+    // ------------------------------------------------------------
+    {
+      "name": "generar_epicas_task",
+      "type": "ConditionalTask",
+      "condition": { "python": "conditions.flags.should_run_epics" },
+      "description": "Generá el conjunto COMPLETO de épicas de {sistema} a partir del documento funcional. Basate ÚNICAMENTE en el contenido real abajo; no inventes alcance.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nPROCEDIMIENTO OBLIGATORIO:\n1. Identificá primero TODOS los requerimientos funcionales del documento y asignales IDs (RF-###) si el documento no los trae numerados.\n2. Agrupá los RF en épicas por capacidad de negocio (no por pantalla ni por capa técnica). Cada RF debe pertenecer a al menos una épica.\n3. Por CADA épica documentá: ID (EP-###), nombre corto orientado a negocio, descripción, objetivo de negocio, alcance (incluye / no incluye), requerimientos funcionales cubiertos (lista de RF-###), criterios de éxito medibles, prioridad (Crítica/Alta/Media/Baja) con justificación, dependencias con otras épicas, y estimación de tamaño (XS/S/M/L/XL).\n4. Cerrá con: '## Matriz de cobertura RF -> Épica' (tabla con TODOS los RF y la épica que los cubre; ninguno puede quedar sin épica) y '## Orden sugerido de ejecución' (secuencia por dependencias y prioridad).\n\nFORMATO DE SALIDA OBLIGATORIO: el delimitador === FILE: epics.md === en su propia línea, seguido del documento completo en español. Sin bloque de código externo.",
+      "expected_output": "Texto plano con el delimitador === FILE: epics.md === en su línea y luego el documento completo en español: catálogo de RF, todas las épicas con el formato obligatorio (EP-### con objetivo, alcance, RFs, criterios de éxito, prioridad, dependencias, tamaño), la matriz de cobertura RF -> Épica sin requerimientos huérfanos y el orden sugerido de ejecución.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "pm_gestor_de_producto",
+      "context": ["validar_entradas_task"]
+    },
+
+    // ------------------------------------------------------------
+    // T2 — HISTORIAS DE USUARIO (condicional: GENERATE_HUS)
+    // ------------------------------------------------------------
+    {
+      "name": "generar_hus_task",
+      "type": "ConditionalTask",
+      "condition": { "python": "conditions.flags.should_run_hus" },
+      "description": "Generá las HISTORIAS DE USUARIO de {sistema} para las épicas indicadas. Basate ÚNICAMENTE en el documento funcional y en las épicas; no inventes alcance.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nEPICS.MD PREVIO ({epics_file}) — si está vacío, usá las épicas generadas en esta misma corrida (contexto de la tarea anterior):\n---\n{epics_text}\n---\n\nÉPICAS A PROCESAR: {epicas_seleccionadas}\n- Si el valor es 'TODAS', generá historias para TODAS las épicas de la fuente.\n- Si es una lista de IDs o nombres (ej: 'EP-001, EP-004'), generá historias SOLO para esas épicas. Si alguna no existe en la fuente, reportalo al inicio del documento en una sección 'ÉPICAS NO ENCONTRADAS' y continuá con las válidas.\n\nPROCEDIMIENTO OBLIGATORIO POR ÉPICA: descomponé cada RF cubierto por la épica en historias INVEST. Por CADA historia documentá: ID (HU-<epica>-###, ej: HU-EP001-001), título corto, historia en formato 'Como <rol del documento> quiero <acción> para <beneficio>', épica padre (EP-###), requerimientos que implementa (RF-###/RN-###), criterios de aceptación en Gherkin (Dado/Cuando/Entonces) cubriendo flujo feliz, alternativos y errores descritos en el documento, prioridad, estimación en story points (1,2,3,5,8,13), dependencias con otras HUs, definición de terminado, y notas o [PREGUNTA ABIERTA] si el documento es ambiguo en ese punto.\n5. Cerrá con '## Matriz de trazabilidad Épica -> HU -> RF': tabla que demuestre que cada RF de cada épica procesada tiene al menos una historia. Ningún RF de las épicas seleccionadas puede quedar sin historia.\n\nFORMATO DE SALIDA OBLIGATORIO: el delimitador === FILE: hus.md === en su propia línea, seguido del documento completo en español. Sin bloque de código externo.",
+      "expected_output": "Texto plano con el delimitador === FILE: hus.md === en su línea y luego el documento completo en español: historias agrupadas por épica en el formato obligatorio (ID, Como/Quiero/Para con roles reales, Gherkin completo, prioridad, story points, dependencias, definición de terminado) y la matriz de trazabilidad Épica -> HU -> RF sin requerimientos sin historia. Si hubo épicas seleccionadas inexistentes, incluye la sección 'ÉPICAS NO ENCONTRADAS'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "pm_gestor_de_producto",
+      "context": ["validar_entradas_task", "generar_epicas_task"]
+    }
+  ],
+
+  "process": "sequential",
+  "verbose": true,
+  "memory": false,
+
+  "before_kickoff_callbacks": [{"python": "callbacks.backlog_load_inputs.before_kickoff"}],
+  "task_callback": {"python": "callbacks.backlog_save_output.on_task_complete"},
+  "after_kickoff_callbacks": [{"python": "callbacks.backlog_save_output.after_kickoff"}],
+
+  "inputs": {
+    // Nombre corto del sistema; se interpola como {sistema}.
+    "sistema": "el sistema descrito en el documento funcional",
+
+    // Documento funcional (el endpoint lo baja de MinIO y llena funcional_text)
+    "funcional_file": "inputs/documento_funcional.pdf",
+    "funcional_text": "",
+
+    // epics.md de una corrida previa (el endpoint lo baja de MinIO si se
+    // proporcionó; vacío si las épicas se generan en esta misma corrida)
+    "epics_file": "",
+    "epics_text": "",
+
+    // "TODAS" | "EP-001" | "EP-001, EP-004" | nombres de épicas
+    "epicas_seleccionadas": "TODAS",
+
+    // Espejo informativo de los flags para que el agente los vea en T0.
+    // Los que realmente cortan la ejecución son las env vars
+    // GENERATE_EPICS / GENERATE_HUS leídas por conditions/flags.py.
+    "generar_epicas": "true",
+    "generar_hus": "false"
+  }
+}
