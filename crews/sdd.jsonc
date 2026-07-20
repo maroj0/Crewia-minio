@@ -175,7 +175,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -188,7 +188,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -201,7 +201,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -214,7 +214,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -227,7 +227,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -240,7 +240,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -253,7 +253,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -266,7 +266,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -279,7 +279,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
@@ -296,7 +296,7 @@
       "guardrails": [
         "La salida no está vacía y está redactada en español.",
         {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
-        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+        {"python": "callbacks.conversational_closer_guardrail.strip_conversational_closers"}
       ],
       "guardrail_max_retries": 1,
       "agent": "auditor_de_cobertura",
