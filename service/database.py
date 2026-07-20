@@ -18,6 +18,8 @@ class JobRow(Base):
     frontend: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     backend: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     endpoints: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    flow: Mapped[str] = mapped_column(String(64), nullable=False, default="qa")
+    flow_inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -45,6 +47,8 @@ def _ensure_job_option_columns(engine) -> None:
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS frontend BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS backend BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS endpoints JSON",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS flow VARCHAR(64) NOT NULL DEFAULT 'qa'",
+        "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS flow_inputs JSON",
     )
     with engine.begin() as conn:
         for statement in statements:

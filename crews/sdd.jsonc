@@ -1,0 +1,347 @@
+{
+  // ============================================================
+  // SDD GENERATOR v3 — Pipeline genérico de SDD con trazabilidad
+  //
+  // Genérico: funciona con cualquier sistema. El nombre/dominio se
+  // inyecta vía el input {sistema}; el contenido sale SIEMPRE de los
+  // documentos funcional y técnico provistos, nunca de un dominio fijo.
+  //
+  // Arquitectura del pipeline (proceso secuencial, 21 tareas):
+  //   FASE 0: Inventario exhaustivo de requisitos con IDs únicos
+  //   FASE 1: Arquitectura + matriz de asignación ID -> documento
+  //   FASE 2: Redacción de cada documento SDD (1 tarea por archivo)
+  //   FASE 3: Auditoría de cobertura de cada documento (1 tarea por archivo)
+  //   FASE 4: Matriz de trazabilidad final (control de omisiones global)
+  //
+  // Convención de salida para callbacks.save_output:
+  //   FASE 3 y 4 deben emitir === FILE: <nombre>.md === en la PRIMERA línea.
+  //   El callback también mapea por nombre de tarea (fallback si falta el
+  //   delimitador). Solo FASE 3/4 escriben en output/; los borradores no.
+  // ============================================================
+
+  "name": "sdd-generator",
+
+  "agents": [
+    "analista_extractor_de_requisitos",
+    "arquitecto_de_soluciones",
+    "redactor_tecnico_sdd",
+    "auditor_de_cobertura"
+  ],
+
+  "tasks": [
+
+    // ------------------------------------------------------------
+    // FASE 0 — INVENTARIO EXHAUSTIVO (la piedra angular del pipeline)
+    // ------------------------------------------------------------
+    {
+      "name": "inventario_exhaustivo_task",
+      "description": "Tu única misión es catalogar de forma EXHAUSTIVA y SIN OMITIR NADA todo el contenido de los documentos de entrada del sistema {sistema}. Basate ÚNICAMENTE en el contenido real proporcionado abajo. NO inventes otro dominio.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nPROCEDIMIENTO OBLIGATORIO:\n1. Recorré los documentos sección por sección, párrafo por párrafo, en orden.\n2. Por cada elemento identificable asignale un ID único, secuencial y sin saltos, según su categoría:\n   - RF-### : Requisitos funcionales (cada funcionalidad, acción de usuario o comportamiento del sistema).\n   - RN-### : Reglas de negocio (validaciones, condiciones, restricciones de dominio, estados y transiciones).\n   - ENT-### : Entidades de datos (cada entidad, sus atributos y relaciones mencionadas).\n   - API-### : Endpoints, servicios o integraciones mencionadas.\n   - RT-### : Restricciones y decisiones técnicas (stack, arquitectura, protocolos, versiones).\n   - RNF-### : Requisitos no funcionales (rendimiento, disponibilidad, escalabilidad, usabilidad).\n   - SEC-### : Requisitos de seguridad (autenticación, autorización, roles, permisos, auditoría, datos sensibles).\n   - UI-### : Pantallas, vistas, componentes de interfaz, flujos de navegación.\n   - QA-### : Requisitos de testing, trazabilidad QA, criterios de aceptación.\n   - DEP-### : Requisitos de despliegue, infraestructura, entornos, operación.\n3. Por cada ID registrá: (a) el ID, (b) un enunciado fiel de UNA a TRES oraciones parafraseando el documento, (c) la referencia de origen (documento y sección/título donde aparece).\n4. Un mismo párrafo del documento puede generar VARIOS IDs. Ante la duda, catalogá: es preferible un ID redundante a una omisión.\n5. Al final, generá una sección 'RESUMEN DE CONTEO' con la cantidad total por categoría y una sección 'SECCIONES CUBIERTAS' listando cada sección/título de ambos documentos con la marca [CATALOGADA].\n\nPROHIBIDO: resumir en abstracto, agrupar requisitos distintos bajo un mismo ID, u omitir secciones por parecer 'poco relevantes'. Todo el contenido en español.",
+      "expected_output": "Un documento Markdown en español titulado 'Inventario de Requisitos — {sistema}' con: (1) una tabla o lista numerada por cada categoría (RF, RN, ENT, API, RT, RNF, SEC, UI, QA, DEP) donde cada fila contiene ID | Enunciado | Origen (documento y sección); (2) sección 'RESUMEN DE CONTEO' con totales por categoría; (3) sección 'SECCIONES CUBIERTAS' que enumera TODAS las secciones de ambos documentos de entrada marcadas como [CATALOGADA]. Los IDs deben ser secuenciales sin saltos dentro de cada categoría. No debe existir contenido de los documentos de entrada que no esté representado por al menos un ID.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "analista_extractor_de_requisitos"
+    },
+
+    // ------------------------------------------------------------
+    // FASE 1 — ARQUITECTURA + MATRIZ DE ASIGNACIÓN
+    // ------------------------------------------------------------
+    {
+      "name": "arquitectura_y_asignacion_task",
+      "description": "A partir del Inventario de Requisitos (tarea anterior) y de los documentos originales de {sistema} abajo, producí: (1) la división arquitectónica en módulos con responsabilidades y dependencias; (2) las etapas de implementación; (3) la MATRIZ DE ASIGNACIÓN: una tabla que asigna CADA ID del inventario (sin excepción) a uno o más documentos destino del SDD (business.md, use-cases.md, rules.md, database.md, api.md, security.md, ui.md, testing.md, deployment.md) y al módulo correspondiente.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nReglas: ningún ID del inventario puede quedar sin asignar; un ID puede aparecer en varios documentos destino; la asignación típica es RF->use-cases.md, RN->rules.md, ENT->database.md, API->api.md, SEC->security.md, UI->ui.md, QA->testing.md, DEP->deployment.md, RT/RNF->donde corresponda, y el contexto de negocio->business.md, pero ajustá según el contenido real. Todo en español.",
+      "expected_output": "Documento Markdown en español con: (1) 'Módulos del sistema': lista de módulos con nombre, responsabilidad principal, dependencias y requisitos clave que atiende (citando IDs); (2) 'Etapas de implementación': fases ordenadas con los módulos e IDs que abarca cada una; (3) 'Matriz de asignación': tabla con columnas ID | Módulo | Documento(s) destino, que incluye TODOS los IDs del inventario sin excepción; (4) 'Verificación de completitud': confirmación de que la cantidad de IDs en la matriz coincide con el RESUMEN DE CONTEO del inventario, indicando los totales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "arquitecto_de_soluciones",
+      "context": ["inventario_exhaustivo_task"]
+    },
+
+    // ------------------------------------------------------------
+    // FASE 2 — REDACCIÓN (una tarea por documento, máxima profundidad)
+    // ------------------------------------------------------------
+    {
+      "name": "redactar_business_task",
+      "description": "Redactá el BORRADOR COMPLETO de business.md del SDD de {sistema}. Usá el Inventario de Requisitos y la Matriz de Asignación como contrato: DEBÉS cubrir cada ID asignado a business.md. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nCONTENIDO MÍNIMO OBLIGATORIO: contexto y problema de negocio; objetivos del sistema; alcance (incluido y excluido); stakeholders y roles de usuario con sus responsabilidades; procesos de negocio descriptos paso a paso; glosario de términos del dominio; métricas/KPIs de éxito si los documentos los mencionan. Cada afirmación relevante debe citar entre corchetes el ID del inventario que la respalda, por ejemplo: 'El sistema permite planificar proyectos [RF-001]'. Cerrá el documento con una sección '## Cobertura' que liste todos los IDs cubiertos. NO uses el delimitador === FILE: === (eso es solo para la versión final auditada). Todo en español, con el máximo nivel de detalle que permitan los documentos fuente.",
+      "expected_output": "Borrador completo de business.md en Markdown, en español, extenso y detallado, con todas las secciones del contenido mínimo obligatorio, citas de IDs entre corchetes en el cuerpo del texto, y una sección final '## Cobertura' con la lista de IDs cubiertos.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_use_cases_task",
+      "description": "Redactá el BORRADOR COMPLETO de use-cases.md del SDD de {sistema}. Contrato: cubrir CADA requisito funcional (RF-###) y cada ID asignado a use-cases.md en la Matriz de Asignación. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO OBLIGATORIO POR CASO DE USO: código (CU-###), nombre, actores, requisitos que implementa (IDs RF), precondiciones, disparador, flujo principal numerado paso a paso, flujos alternativos, flujos de excepción/errores, postcondiciones, y reglas de negocio relacionadas (IDs RN). Incluí también un diagrama de relación actores-casos de uso en texto (lista o tabla) y una tabla resumen CU-### -> RF-### cubiertos. Ningún RF puede quedar sin al menos un caso de uso. Cerrá con '## Cobertura' listando todos los IDs cubiertos. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de use-cases.md en Markdown, en español, con TODOS los casos de uso en el formato obligatorio, tabla resumen de trazabilidad CU->RF, y sección final '## Cobertura' con los IDs cubiertos. Cada RF del inventario debe aparecer en al menos un caso de uso.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_rules_task",
+      "description": "Redactá el BORRADOR COMPLETO de rules.md del SDD de {sistema}. Contrato: documentar CADA regla de negocio (RN-###) del inventario y todo ID asignado a rules.md. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO OBLIGATORIO POR REGLA: ID (RN-###), enunciado preciso, tipo (validación, cálculo, restricción, autorización, transición de estado), origen (sección del documento fuente), casos de uso afectados (CU/RF), comportamiento esperado ante incumplimiento (mensaje de error, bloqueo, etc.). Incluí además: diagramas de estados y transiciones en texto o tablas para las entidades con ciclo de vida (las entidades con ciclo de vida que describan los documentos), y una sección de invariantes del sistema. Cerrá con '## Cobertura'. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de rules.md en Markdown, en español, con cada regla de negocio en el formato obligatorio, tablas o diagramas de estados y transiciones para las entidades con ciclo de vida, sección de invariantes, y sección final '## Cobertura'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_database_task",
+      "description": "Redactá el BORRADOR COMPLETO de database.md del SDD de {sistema}. Contrato: modelar CADA entidad (ENT-###) del inventario y todo ID asignado a database.md. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nCONTENIDO MÍNIMO OBLIGATORIO: (1) modelo entidad-relación completo descrito en texto y/o diagrama mermaid erDiagram; (2) diccionario de datos: una tabla por entidad con columnas nombre | tipo de dato | nulabilidad | clave/índice | descripción | regla asociada (RN si aplica); (3) relaciones y cardinalidades explícitas; (4) índices propuestos y su justificación; (5) restricciones de integridad (PK, FK, UNIQUE, CHECK); (6) consideraciones de auditoría/soft-delete/timestamps si los documentos las mencionan; (7) estrategia de migraciones y versionado del esquema si el documento técnico define stack. Derivá los atributos de lo que dicen los documentos; si un atributo es una inferencia razonable no explícita, marcalo con [INFERIDO]. Cerrá con '## Cobertura'. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de database.md en Markdown, en español, con modelo ER, diccionario de datos completo (una tabla por entidad), relaciones, índices, restricciones de integridad, y sección final '## Cobertura'. Cada ENT del inventario debe tener su tabla en el diccionario de datos.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_api_task",
+      "description": "Redactá el BORRADOR COMPLETO de api.md del SDD de {sistema}. Contrato: cubrir CADA ID de categoría API-### y todo ID asignado a api.md; además, cada caso de uso debe poder ejecutarse mediante los endpoints definidos. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO OBLIGATORIO POR ENDPOINT: método HTTP y ruta, descripción, autenticación/permisos requeridos (referenciando SEC-### si aplica), parámetros (path/query), cuerpo de request con ejemplo JSON, respuestas por código de estado (200/201/400/401/403/404/409/422/500 según corresponda) con ejemplos JSON, y reglas de negocio aplicadas (RN-###). Incluí también: convenciones generales (versionado, paginación, filtrado, ordenamiento, formato de errores estándar), y una tabla resumen endpoint -> casos de uso/RF que soporta. Cerrá con '## Cobertura'. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de api.md en Markdown, en español, con convenciones generales de la API, cada endpoint en el formato obligatorio con ejemplos JSON de request y response, tabla resumen endpoint->RF/CU, y sección final '## Cobertura'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_security_task",
+      "description": "Redactá el BORRADOR COMPLETO de security.md del SDD de {sistema}. Contrato: cubrir CADA ID de categoría SEC-### y todo ID asignado a security.md. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nCONTENIDO MÍNIMO OBLIGATORIO: (1) modelo de autenticación (mecanismo, ciclo de vida de sesiones/tokens); (2) modelo de autorización: matriz de roles vs. permisos/acciones derivada de los roles descritos en los documentos; (3) protección de datos (datos sensibles identificados, cifrado en tránsito y reposo si aplica); (4) auditoría y registro de eventos de seguridad; (5) amenazas y mitigaciones relevantes al sistema (referenciando OWASP donde aplique); (6) requisitos de cumplimiento si los documentos los mencionan. Cada punto debe citar los IDs (SEC, RN, RT) que lo respaldan. Cerrá con '## Cobertura'. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de security.md en Markdown, en español, con modelo de autenticación, matriz de roles y permisos, protección de datos, auditoría, amenazas y mitigaciones, citas de IDs en el cuerpo, y sección final '## Cobertura'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_ui_task",
+      "description": "Redactá el BORRADOR COMPLETO de ui.md del SDD de {sistema}. Contrato: cubrir CADA ID de categoría UI-### y todo ID asignado a ui.md; cada caso de uso con interacción de usuario debe tener su pantalla o flujo. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO OBLIGATORIO POR PANTALLA/VISTA: nombre, propósito, roles con acceso, componentes principales (listas, formularios, botones, tablas, filtros), campos de formulario con validaciones (referenciando RN-###), estados de la vista (carga, vacío, error, éxito), acciones disponibles y navegación de salida. Incluí también: mapa de navegación global (texto o mermaid flowchart), lineamientos generales de UX/accesibilidad mencionados o derivados, y tabla pantalla -> casos de uso/RF que soporta. Cerrá con '## Cobertura'. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de ui.md en Markdown, en español, con mapa de navegación, cada pantalla en el formato obligatorio, validaciones referenciando reglas, tabla pantalla->RF/CU, y sección final '## Cobertura'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_testing_task",
+      "description": "Redactá el BORRADOR COMPLETO de testing.md del SDD de {sistema}. Contrato: cubrir CADA ID de categoría QA-### y todo ID asignado a testing.md; además, cada RF y cada RN deben tener al menos un caso de prueba trazado. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nCONTENIDO MÍNIMO OBLIGATORIO: (1) estrategia de testing por niveles (unitario, integración, e2e, y los que el documento técnico defina); (2) casos de prueba con formato: código (TC-###), objetivo, requisito/regla que verifica (RF/RN), precondiciones, pasos, datos de prueba, resultado esperado; (3) matriz de trazabilidad TC -> RF/RN donde se evidencie que ningún RF ni RN queda sin prueba; (4) criterios de aceptación y de salida; (5) gestión de defectos y su ciclo de vida según lo que definan los documentos si los documentos lo definen; (6) datos y entornos de prueba. Cerrá con '## Cobertura'. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de testing.md en Markdown, en español, con estrategia por niveles, casos de prueba en el formato obligatorio, matriz de trazabilidad TC->RF/RN completa, criterios de aceptación, gestión de defectos, y sección final '## Cobertura'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+    {
+      "name": "redactar_deployment_task",
+      "description": "Redactá el BORRADOR COMPLETO de deployment.md del SDD de {sistema}. Contrato: cubrir CADA ID de categoría DEP-###, los RT-### y RNF-### de infraestructura/operación, y todo ID asignado a deployment.md. Basate únicamente en los documentos reales abajo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nCONTENIDO MÍNIMO OBLIGATORIO: (1) topología de infraestructura y componentes desplegables (según el stack del documento técnico); (2) entornos (desarrollo, testing/QA, producción y los que se mencionen) y sus diferencias de configuración; (3) pipeline CI/CD propuesto: etapas, gates de calidad, artefactos; (4) gestión de configuración y secretos; (5) observabilidad: logs, métricas, alertas; (6) respaldos y recuperación; (7) estrategia de despliegue y rollback; (8) requisitos de capacidad/escalado derivados de los RNF. Marcá con [INFERIDO] lo que sea propuesta razonable no explícita en los documentos. Cerrá con '## Cobertura'. NO uses el delimitador === FILE: ===. Todo en español, exhaustivo.",
+      "expected_output": "Borrador completo de deployment.md en Markdown, en español, con topología, entornos, pipeline CI/CD, configuración y secretos, observabilidad, respaldos, estrategia de despliegue y rollback, y sección final '## Cobertura'.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "redactor_tecnico_sdd",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task"]
+    },
+
+    // ------------------------------------------------------------
+    // FASE 3 — AUDITORÍA DE COBERTURA POR DOCUMENTO
+    // Cada auditoría compara borrador vs. inventario + fuentes,
+    // detecta omisiones y REESCRIBE el documento corregido.
+    // Solo estas tareas emiten el delimitador === FILE: ===.
+    // ------------------------------------------------------------
+    {
+      "name": "auditar_business_task",
+      "description": "Auditá el borrador de business.md contra el Inventario de Requisitos, la Matriz de Asignación y los documentos originales abajo. PROCEDIMIENTO: (1) listá internamente cada ID asignado a business.md en la matriz; (2) verificá uno por uno si está cubierto en el borrador con suficiente detalle y fidelidad a los documentos fuente; (3) detectá contenido inventado o desviado del dominio de {sistema}; (4) REESCRIBÍ el documento completo corrigiendo cada omisión, error o falta de detalle encontrada — no entregues solo observaciones, entregá el documento final corregido y AMPLIADO donde faltaba profundidad.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: business.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de business.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: business.md ===; luego el contenido final completo de business.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_business_task"]
+    },
+    {
+      "name": "auditar_use_cases_task",
+      "description": "Auditá el borrador de use-cases.md contra el Inventario, la Matriz de Asignación y los documentos originales abajo. Verificá ID por ID que TODOS los RF tienen al menos un caso de uso completo (actores, precondiciones, flujo principal, alternativos, excepciones, postcondiciones) y que los flujos son fieles a los documentos. REESCRIBÍ el documento completo corrigiendo omisiones y agregando los casos de uso faltantes con todo su detalle.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: use-cases.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de use-cases.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: use-cases.md ===; luego el contenido final completo de use-cases.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_use_cases_task"]
+    },
+    {
+      "name": "auditar_rules_task",
+      "description": "Auditá el borrador de rules.md contra el Inventario, la Matriz y los documentos originales abajo. Verificá RN por RN que cada regla está documentada con enunciado fiel, tipo, origen y comportamiento ante incumplimiento, y que los estados/transiciones reflejan los documentos. REESCRIBÍ el documento completo corregido.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: rules.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de rules.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: rules.md ===; luego el contenido final completo de rules.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_rules_task"]
+    },
+    {
+      "name": "auditar_database_task",
+      "description": "Auditá el borrador de database.md contra el Inventario, la Matriz y los documentos originales abajo. Verificá ENT por ENT que cada entidad tiene su tabla de diccionario de datos completa, que las relaciones y cardinalidades son consistentes con los casos de uso y reglas, y que no faltan entidades o atributos mencionados en los documentos. REESCRIBÍ el documento completo corregido.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: database.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de database.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: database.md ===; luego el contenido final completo de database.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_database_task"]
+    },
+    {
+      "name": "auditar_api_task",
+      "description": "Auditá el borrador de api.md contra el Inventario, la Matriz, los documentos originales abajo y la lógica de los casos de uso: verificá que cada API-### está cubierto, que cada caso de uso puede ejecutarse con los endpoints definidos, y que los ejemplos JSON son consistentes con las entidades del modelo de datos. REESCRIBÍ el documento completo corregido, agregando los endpoints faltantes con formato completo.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: api.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de api.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: api.md ===; luego el contenido final completo de api.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_api_task"]
+    },
+    {
+      "name": "auditar_security_task",
+      "description": "Auditá el borrador de security.md contra el Inventario, la Matriz y los documentos originales abajo. Verificá SEC por SEC, que la matriz de roles y permisos incluye todos los roles descritos en los documentos, y que no hay afirmaciones de seguridad genéricas sin anclaje al sistema. REESCRIBÍ el documento completo corregido.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: security.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de security.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: security.md ===; luego el contenido final completo de security.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_security_task"]
+    },
+    {
+      "name": "auditar_ui_task",
+      "description": "Auditá el borrador de ui.md contra el Inventario, la Matriz y los documentos originales abajo. Verificá UI por UI que cada pantalla/flujo está documentada con componentes, validaciones y estados, y que cada caso de uso con interacción de usuario tiene soporte en alguna pantalla. REESCRIBÍ el documento completo corregido.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: ui.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de ui.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: ui.md ===; luego el contenido final completo de ui.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_ui_task"]
+    },
+    {
+      "name": "auditar_testing_task",
+      "description": "Auditá el borrador de testing.md contra el Inventario, la Matriz y los documentos originales abajo. Verificá en la matriz de trazabilidad que CADA RF y CADA RN tiene al menos un caso de prueba; si falta alguno, agregá el caso de prueba completo. Verificá que la gestión de defectos y la trazabilidad QA reflejan lo que describen los documentos de {sistema}. REESCRIBÍ el documento completo corregido.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: testing.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de testing.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: testing.md ===; luego el contenido final completo de testing.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_testing_task"]
+    },
+    {
+      "name": "auditar_deployment_task",
+      "description": "Auditá el borrador de deployment.md contra el Inventario, la Matriz y los documentos originales abajo. Verificá DEP por DEP y RT/RNF de operación por ítem, que el stack y la topología son consistentes con el documento técnico, y que las inferencias están marcadas con [INFERIDO]. REESCRIBÍ el documento completo corregido.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nDOCUMENTO TÉCNICO ({tecnico_file}):\n---\n{tecnico_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: deployment.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va el contenido final completo de deployment.md en español, incluyendo ## Cobertura. Al FINAL, después del documento, agregá la sección ## INFORME DE AUDITORÍA con IDs verificados y correcciones. PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: deployment.md ===; luego el contenido final completo de deployment.md en español con ## Cobertura; al final ## INFORME DE AUDITORÍA. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": ["inventario_exhaustivo_task", "arquitectura_y_asignacion_task", "redactar_deployment_task"]
+    },
+
+    // ------------------------------------------------------------
+    // FASE 4 — CONTROL GLOBAL DE OMISIONES (matriz de trazabilidad)
+    // ------------------------------------------------------------
+    {
+      "name": "trazabilidad_global_task",
+      "description": "Control final del SDD completo de {sistema}. Con el Inventario de Requisitos como contrato y las secciones '## Cobertura' de los nueve documentos auditados como evidencia, construí la MATRIZ DE TRAZABILIDAD GLOBAL: una tabla con CADA ID del inventario (todas las categorías, sin excepción) y columnas ID | Enunciado breve | Documento(s) donde está cubierto | Estado. Estado es CUBIERTO si aparece en al menos un documento final, o NO CUBIERTO si no aparece en ninguno. Si existe algún ID en estado NO CUBIERTO, listalo en una sección 'OMISIONES DETECTADAS' con la explicación y el documento donde debería incorporarse (esta sección sirve como reporte accionable para una segunda corrida). Incluí al final un 'VEREDICTO' con: total de IDs, total cubiertos, total no cubiertos y porcentaje de cobertura.\n\nFORMATO DE SALIDA OBLIGATORIO: la PRIMERA línea de tu respuesta DEBE ser exactamente === FILE: traceability.md === (sin markdown, sin backticks, sin negritas). Inmediatamente debajo va la matriz de trazabilidad global completa en español (todos los IDs, OMISIONES DETECTADAS o declaración de que no hay, y VEREDICTO). PROHIBIDO: ofrecer PDF/Word/DOCX, preguntar si quiere descargas, saludos conversacionales, o cualquier texto fuera de este formato.",
+      "expected_output": "Texto plano cuya PRIMERA línea es exactamente === FILE: traceability.md ===; luego la matriz de trazabilidad global completa en español con OMISIONES DETECTADAS y VEREDICTO. Sin ofertas de PDF/Word ni preguntas conversacionales.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español.",
+        {"python": "callbacks.file_delimiter_guardrail.require_file_delimiter"},
+        "La salida no ofrece generar PDF, Word ni archivos descargables, ni termina con preguntas conversacionales."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "auditor_de_cobertura",
+      "context": [
+        "inventario_exhaustivo_task",
+        "auditar_business_task",
+        "auditar_use_cases_task",
+        "auditar_rules_task",
+        "auditar_database_task",
+        "auditar_api_task",
+        "auditar_security_task",
+        "auditar_ui_task",
+        "auditar_testing_task",
+        "auditar_deployment_task"
+      ]
+    }
+  ],
+
+  "process": "sequential",
+  "verbose": true,
+
+  // memory desactivada a propósito: la trazabilidad se transporta
+  // explícitamente vía "context" de cada tarea, que es determinista.
+  "memory": false,
+
+  // planning no es necesario: el plan ya está codificado en el pipeline.
+  // "planning": false,
+
+  "before_kickoff_callbacks": [{"python": "callbacks.load_inputs.before_kickoff"}],
+  "task_callback": {"python": "callbacks.save_output.on_task_complete"},
+  "after_kickoff_callbacks": [{"python": "callbacks.save_output.after_kickoff"}],
+
+  // Si tu LLM lo soporta, subí el límite de tokens de salida al máximo
+  // en la definición de los agentes (max_tokens) — los documentos largos
+  // lo necesitan.
+  // "max_rpm": null,
+
+  "inputs": {
+    // Nombre corto del sistema a documentar; se interpola como {sistema}
+    // en todas las tareas. Cambialo por corrida (ej: "ProjectTrack").
+    "sistema": "el sistema descrito en los documentos de entrada",
+    // Markdown (.md) por defecto. También admite .txt o .pdf si se indica.
+    "funcional_file": "inputs/documento_funcional.md",
+    "tecnico_file": "inputs/documento_tecnico.md",
+    "funcional_text": "",
+    "tecnico_text": ""
+  }
+}

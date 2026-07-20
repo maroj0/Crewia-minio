@@ -33,7 +33,6 @@ services:
 
   api:
     build: .
-    # Solo interno; el acceso público entra por nginx :80
     expose:
       - "8000"
     env_file:
