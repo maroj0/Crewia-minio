@@ -10,6 +10,7 @@ COPY pyproject.toml README.md ./
 COPY agents ./agents
 COPY knowledge ./knowledge
 COPY tools ./tools
+COPY callbacks ./callbacks
 COPY crews ./crews
 COPY crew.jsonc ./crew.jsonc
 COPY service ./service

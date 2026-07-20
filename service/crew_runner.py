@@ -44,7 +44,7 @@ class CrewRunner:
 
     def _copy_project_assets(self, workspace: Path) -> None:
         project_root = self.settings.project_root
-        for item in ("agents", "knowledge", "tools"):
+        for item in ("agents", "callbacks", "knowledge", "tools"):
             source = project_root / item
             target = workspace / item
             if source.is_dir():
@@ -195,8 +195,8 @@ class CrewRunner:
             job_config = json.loads(job_config_path.read_text(encoding="utf-8"))
             local_paths = job_config.get("sdd_local_paths") or {}
             return {
-                "functional_document": local_paths.get("functional_document", "input/functional_document"),
-                "technical_document": local_paths.get("technical_document", "input/technical_document"),
+                "funcional_file": local_paths.get("functional_document", "input/functional_document"),
+                "tecnico_file": local_paths.get("technical_document", "input/technical_document"),
                 "tasks_file": local_paths.get("tasks", "input/tasks"),
             }
 
