@@ -6,14 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY pyproject.toml README.md ./
 COPY agents ./agents
 COPY knowledge ./knowledge
 COPY tools ./tools
+COPY crews ./crews
 COPY crew.jsonc ./crew.jsonc
 COPY service ./service
 

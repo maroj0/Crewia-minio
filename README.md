@@ -29,13 +29,37 @@ Services:
 
 ## API usage
 
-Create a job (async):
+List available flows (each includes its request JSON Schema):
+
+```bash
+curl http://localhost:8000/api/v1/flows
+```
+
+Create a QA job (async):
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/jobs \
   -H "Content-Type: application/json" \
-  -d "{\"user_story\": \"Como usuario registrado quiero iniciar sesión para acceder a mi panel.\"}"
+  -d "{\"flow\": \"qa\", \"user_story\": \"Como usuario registrado quiero iniciar sesión para acceder a mi panel.\"}"
 ```
+
+Create an SDD job with MinIO document references:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -d "{\"flow\": \"sdd\", \"documents\": {\"functional_document\": {\"ref\": \"projects/acme/functional.md\"}, \"technical_document\": {\"ref\": \"projects/acme/technical.md\"}, \"tasks\": {\"ref\": \"projects/acme/tasks.json\"}}}"
+```
+
+Create an SDD job with a custom `crew.jsonc` stored in MinIO:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -d "{\"flow\": \"sdd\", \"crew_file\": {\"ref\": \"projects/acme/crew.jsonc\"}}"
+```
+
+MinIO refs accept object keys (within `MINIO_BUCKET`), `s3://bucket/key`, or http(s) URLs.
 
 Check job status:
 
@@ -100,7 +124,11 @@ crewai run
 ## Project Structure
 
 - `agents/` - Agent definitions (JSONC)
-- `crew.jsonc` - Crew definition with tasks and configuration
+- `crew.jsonc` - Default QA crew definition (used by `crewai run` and flow `qa`)
+- `crews/sdd.jsonc` - SDD crew (flow `sdd` with document inputs)
+- `crews/` - Additional crew definitions for other flows
+- `service/schemas/` - Pydantic contracts per flow (discriminated union on `flow`)
+- `service/flow_registry.py` - Flow registry: crew file, validators, OpenAPI schemas
 - `service/` - FastAPI microservice
 - `tools/` - Custom tools (Python)
 - `knowledge/` - Knowledge files for agents

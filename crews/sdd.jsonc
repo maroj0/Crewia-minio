@@ -1,0 +1,50 @@
+{
+
+  "name": "sdd",
+
+
+
+  "agents": ["sdd_analyst"],
+
+
+
+  "tasks": [
+
+    {
+
+      "name": "generar_sdd",
+
+      "description": "Leé con FileReadTool los archivos indicados:\n- Documento funcional: {functional_document}\n- Documento técnico: {technical_document}\n- Listado de tareas: {tasks_file}\n\nGenerá un Software Design Document (SDD) completo y persistilo con FileWriterTool en output/sdd/sdd.md.\n\nEl SDD debe incluir como mínimo: resumen ejecutivo, alcance, arquitectura propuesta, componentes/módulos, flujos principales, modelo de datos (si aplica), integraciones, supuestos, riesgos, y trazabilidad con las tareas del listado.",
+
+      "expected_output": "Archivo REAL en disco: output/sdd/sdd.md con un SDD estructurado basado en los tres insumos.",
+
+      "agent": "sdd_analyst",
+
+      "output_file": "output/sdd/summary.md"
+
+    }
+
+  ],
+
+
+
+  "process": "sequential",
+
+  "verbose": true,
+
+  "memory": false,
+
+
+
+  "inputs": {
+
+    "functional_document": "input/functional_document",
+
+    "technical_document": "input/technical_document",
+
+    "tasks_file": "input/tasks"
+
+  }
+
+}
+

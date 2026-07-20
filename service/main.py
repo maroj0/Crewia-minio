@@ -2,20 +2,25 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from typing import Annotated, Union
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
 from service.config import get_settings
 from service.crew_runner import CrewRunner
+from service.flow_registry import list_flows
 from service.job_store import JobStatus, JobStore
 from service.minio_client import MinioStorage
 from service.schemas import (
     ArtifactInfo,
     ArtifactsResponse,
-    CreateJobRequest,
+    CreateQaJobRequest,
+    CreateSddJobRequest,
+    FlowInfo,
+    FlowListResponse,
     JobListResponse,
     JobResponse,
     JobStatusEnum,
@@ -29,21 +34,22 @@ job_store = JobStore(settings.database_url)
 crew_runner = CrewRunner(settings, storage, job_store)
 
 API_DESCRIPTION = """
-API para generar test cases y automatizaciones Playwright a partir de historias de usuario.
+API para ejecutar flujos Crew.ai (QA, SDD, etc.) de forma asíncrona.
 
 ## Flujo
-1. **POST /api/v1/jobs** — envía la HU + opciones (`base_url`, `frontend`, `backend`, `endpoints`) y recibe un `job_id`.
-2. **GET /api/v1/jobs/{job_id}** — consulta el estado del job.
-3. **GET /api/v1/jobs/{job_id}/artifacts** — lista archivos generados en MinIO.
-4. **POST /api/v1/jobs/{job_id}/retry** — reintenta un job fallido con la misma HU y opciones.
+1. **GET /api/v1/flows** — lista flujos disponibles y el schema de cada contrato.
+2. **POST /api/v1/jobs** — envía `flow` + payload específico del flujo y recibe un `job_id`.
+3. **GET /api/v1/jobs/{job_id}** — consulta el estado del job.
+4. **GET /api/v1/jobs/{job_id}/artifacts** — lista archivos generados en MinIO.
+5. **POST /api/v1/jobs/{job_id}/retry** — reintenta un job fallido.
 
-Si `backend=true`, el body **debe** incluir `endpoints` (lista de APIs a probar).
-Los jobs se ejecutan de forma asíncrona. Metadata en PostgreSQL, archivos en MinIO.
+Cada flujo valida su propio contrato. Metadata en PostgreSQL, archivos en MinIO.
 """
 
 TAGS_METADATA = [
     {"name": "health", "description": "Healthcheck del servicio."},
-    {"name": "jobs", "description": "Creación, consulta y listado de jobs de QA."},
+    {"name": "flows", "description": "Flujos Crew.ai disponibles para jobs."},
+    {"name": "jobs", "description": "Creación, consulta y listado de jobs."},
     {"name": "artifacts", "description": "Artefactos generados por cada job."},
 ]
 
@@ -56,9 +62,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="QA Crew API",
+    title="Crew API",
     description=API_DESCRIPTION,
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
     docs_url="/swagger",
     redoc_url="/redoc",
@@ -81,24 +87,34 @@ async def root() -> RedirectResponse:
 
 
 def _to_job_response(record) -> JobResponse:
+    is_qa = record.flow == "qa"
+    flow_inputs = record.flow_inputs
+    user_story = None
+    if is_qa:
+        user_story = (flow_inputs or {}).get("user_story") or record.user_story or None
+    elif flow_inputs:
+        user_story = record.user_story or None
+
     return JobResponse(
         job_id=record.job_id,
+        flow=record.flow,
         status=JobStatusEnum(record.status.value),
         created_at=record.created_at,
         updated_at=record.updated_at,
         error=record.error,
         result_summary=record.result_summary,
         artifacts=[ArtifactInfo(**artifact) for artifact in record.artifacts],
-        base_url=record.base_url,
-        frontend=record.frontend,
-        backend=record.backend,
-        endpoints=record.endpoints,
+        flow_inputs=flow_inputs,
+        user_story=user_story,
+        base_url=(flow_inputs or {}).get("base_url") if is_qa else None,
+        frontend=(flow_inputs or {}).get("frontend") if is_qa else None,
+        backend=(flow_inputs or {}).get("backend") if is_qa else None,
+        endpoints=(flow_inputs or {}).get("endpoints") if is_qa else None,
     )
 
 
 @app.get("/health", tags=["health"], summary="Healthcheck")
 async def health() -> dict[str, str]:
-    """Verifica que el servicio esté en línea."""
     return {"status": "ok"}
 
 
@@ -107,43 +123,79 @@ async def health() -> dict[str, str]:
     response_model=JobResponse,
     status_code=status.HTTP_202_ACCEPTED,
     tags=["jobs"],
-    summary="Crear job de QA",
+    summary="Crear job",
     response_description="Job encolado para ejecución asíncrona.",
 )
-async def create_job(request: CreateJobRequest, background_tasks: BackgroundTasks) -> JobResponse:
+async def create_job(
+    request: Annotated[
+        Union[CreateQaJobRequest, CreateSddJobRequest],
+        Body(discriminator="flow"),
+    ],
+    background_tasks: BackgroundTasks,
+) -> JobResponse:
     """
-    Recibe una historia de usuario y opciones de testing, y dispara el crew en background.
+    Crea un job según el flujo indicado en `flow`. Cada flujo exige su propio contrato:
 
-    - `base_url` (opcional): ambiente para Playwright (`baseURL`).
-    - `frontend` / `backend`: al menos uno debe ser true; define el alcance de casos y automatizaciones.
-    - `endpoints` (obligatorio si `backend=true`): lista de endpoints API a cubrir.
+    - **qa**: `user_story`, opcionalmente `base_url`, `frontend`, `backend`, `endpoints`.
+    - **sdd**: `documents` (funcional + técnico + tareas en MinIO) **o** `crew_file` (crew.jsonc en MinIO).
     """
-    endpoints_payload = (
-        [endpoint.model_dump(mode="json") for endpoint in request.endpoints]
-        if request.endpoints
-        else None
-    )
-    record = await job_store.create_job(
-        request.user_story,
-        base_url=request.base_url,
-        frontend=request.frontend,
-        backend=request.backend,
-        endpoints=endpoints_payload,
-    )
-    prefix = storage.job_prefix(record.job_id)
-    await asyncio.to_thread(
-        storage.upload_text,
-        f"{prefix}/input/historia_usuario.txt",
-        request.user_story,
-    )
-    if endpoints_payload is not None:
-        await asyncio.to_thread(
-            storage.upload_json,
-            f"{prefix}/input/endpoints.json",
-            endpoints_payload,
+    flow_inputs = request.to_flow_inputs()
+    prefix = None
+
+    if isinstance(request, CreateQaJobRequest):
+        endpoints_payload = (
+            [endpoint.model_dump(mode="json") for endpoint in request.endpoints]
+            if request.endpoints
+            else None
         )
-    background_tasks.add_task(crew_runner.run_job, record.job_id, request.user_story)
+        record = await job_store.create_job(
+            flow="qa",
+            flow_inputs=flow_inputs,
+            user_story=request.user_story,
+            base_url=request.base_url,
+            frontend=request.frontend,
+            backend=request.backend,
+            endpoints=endpoints_payload,
+        )
+        prefix = storage.job_prefix(record.job_id)
+        await asyncio.to_thread(
+            storage.upload_text,
+            f"{prefix}/input/historia_usuario.txt",
+            request.user_story,
+        )
+        if endpoints_payload is not None:
+            await asyncio.to_thread(
+                storage.upload_json,
+                f"{prefix}/input/endpoints.json",
+                endpoints_payload,
+            )
+    else:
+        record = await job_store.create_job(
+            flow="sdd",
+            flow_inputs=flow_inputs,
+            user_story="",
+            frontend=False,
+            backend=False,
+        )
+        prefix = storage.job_prefix(record.job_id)
+
+    await asyncio.to_thread(
+        storage.upload_json,
+        f"{prefix}/input/flow_inputs.json",
+        flow_inputs,
+    )
+    background_tasks.add_task(crew_runner.run_job, record.job_id)
     return _to_job_response(record)
+
+
+@app.get(
+    "/api/v1/flows",
+    response_model=FlowListResponse,
+    tags=["flows"],
+    summary="Listar flujos disponibles",
+)
+async def list_available_flows() -> FlowListResponse:
+    return FlowListResponse(flows=[FlowInfo(**flow.to_info()) for flow in list_flows()])
 
 
 @app.get(
@@ -158,10 +210,9 @@ async def list_jobs(
         alias="status",
         description="Filtrar por estado del job.",
     ),
-    limit: int = Query(default=20, ge=1, le=100, description="Cantidad máxima de resultados."),
-    offset: int = Query(default=0, ge=0, description="Desplazamiento para paginación."),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> JobListResponse:
-    """Lista jobs persistidos en PostgreSQL, con paginación y filtro opcional por estado."""
     job_status = JobStatus(status_filter.value) if status_filter else None
     records, total = await job_store.list_jobs(status=job_status, limit=limit, offset=offset)
     return JobListResponse(
@@ -179,7 +230,6 @@ async def list_jobs(
     summary="Obtener job por ID",
 )
 async def get_job(job_id: str) -> JobResponse:
-    """Devuelve el estado y metadata de un job específico."""
     record = await job_store.get_job(job_id)
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
@@ -192,15 +242,8 @@ async def get_job(job_id: str) -> JobResponse:
     status_code=status.HTTP_202_ACCEPTED,
     tags=["jobs"],
     summary="Reintentar job fallido",
-    response_description="Job reencolado para ejecución asíncrona.",
 )
 async def retry_job(job_id: str, background_tasks: BackgroundTasks) -> JobResponse:
-    """
-    Reintenta un job en estado `failed` usando la misma historia de usuario y opciones guardadas.
-
-    Reinicia el estado a `pending`, limpia error/resultados previos y vuelve a
-    ejecutar el crew en background con el mismo `job_id`.
-    """
     record = await job_store.get_job(job_id)
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
@@ -220,7 +263,7 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks) -> JobRespon
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
-    background_tasks.add_task(crew_runner.run_job, updated.job_id, updated.user_story)
+    background_tasks.add_task(crew_runner.run_job, updated.job_id)
     return _to_job_response(updated)
 
 
@@ -231,7 +274,6 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks) -> JobRespon
     summary="Listar artefactos del job",
 )
 async def get_job_artifacts(job_id: str) -> ArtifactsResponse:
-    """Lista los archivos generados en MinIO e incluye URLs firmadas de descarga."""
     record = await job_store.get_job(job_id)
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")

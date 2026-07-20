@@ -6,12 +6,18 @@ import os
 import re
 import shutil
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from dotenv import load_dotenv
 
 from service.config import Settings, get_settings
-from service.job_store import JobStatus, JobStore
+from service.flow_registry import (
+    MissingPlaywrightArtifactsError,
+    MissingTestCasesArtifactsError,
+    get_flow,
+    parse_flow_agents_from_crew,
+)
+from service.job_store import JobRecord, JobStatus, JobStore
 from service.minio_client import MinioStorage
 
 WRITE_TOOL_NAMES = {
@@ -19,14 +25,6 @@ WRITE_TOOL_NAMES = {
     "Write Project File",
     "write project file",
 }
-
-
-class MissingPlaywrightArtifactsError(Exception):
-    """Raised when Playwright suite files are missing after crew kickoff."""
-
-
-class MissingTestCasesArtifactsError(Exception):
-    """Raised when test-cases catalog files are missing or invalid after crew kickoff."""
 
 
 class CrewRunner:
@@ -44,64 +42,167 @@ class CrewRunner:
     def _job_workspace(self, job_id: str) -> Path:
         return self.settings.jobs_workspace_root / job_id
 
-    def _prepare_workspace(
-        self,
-        job_id: str,
-        user_story: str,
-        *,
-        base_url: str | None = None,
-        frontend: bool = True,
-        backend: bool = False,
-        endpoints: list[dict] | None = None,
-    ) -> Path:
-        workspace = self._job_workspace(job_id)
-        if workspace.exists():
-            shutil.rmtree(workspace)
-        workspace.mkdir(parents=True, exist_ok=True)
-
+    def _copy_project_assets(self, workspace: Path) -> None:
         project_root = self.settings.project_root
-        for item in ("agents", "knowledge", "tools", "crew.jsonc"):
+        for item in ("agents", "knowledge", "tools"):
             source = project_root / item
             target = workspace / item
             if source.is_dir():
+                if target.exists():
+                    shutil.rmtree(target)
                 shutil.copytree(source, target)
             elif source.is_file():
                 shutil.copy2(source, target)
 
+    def _install_bundled_crew(self, workspace: Path, crew_file: str) -> None:
+        crew_source = self.settings.project_root / crew_file
+        if not crew_source.is_file():
+            raise FileNotFoundError(f"Crew file not found: {crew_source}")
+        shutil.copy2(crew_source, workspace / "crew.jsonc")
+
+    def _install_crew_from_minio(self, workspace: Path, crew_ref: str) -> None:
+        crew_path = workspace / "crew.jsonc"
+        self.storage.download_object(crew_ref, crew_path)
+        crew_text = crew_path.read_text(encoding="utf-8")
+        _, crew_key = self.storage.parse_object_ref(crew_ref)
+        crew_prefix = PurePosixPath(crew_key).parent.as_posix()
+        agents_dir = workspace / "agents"
+        agents_dir.mkdir(parents=True, exist_ok=True)
+
+        for agent_name in parse_flow_agents_from_crew(crew_text):
+            bundled = self.settings.project_root / "agents" / f"{agent_name}.jsonc"
+            if bundled.is_file() and not (agents_dir / f"{agent_name}.jsonc").exists():
+                shutil.copy2(bundled, agents_dir / f"{agent_name}.jsonc")
+
+            if crew_prefix and crew_prefix != ".":
+                remote_agent_key = f"{crew_prefix}/agents/{agent_name}.jsonc"
+                destination = agents_dir / f"{agent_name}.jsonc"
+                if self.storage.try_download_object(remote_agent_key, destination):
+                    continue
+
+            if not (agents_dir / f"{agent_name}.jsonc").exists():
+                raise FileNotFoundError(
+                    f"Agente '{agent_name}' no encontrado en MinIO ni en agents/ del proyecto."
+                )
+
+    def _download_sdd_documents(self, workspace: Path, flow_inputs: dict) -> dict[str, str]:
+        documents = flow_inputs.get("documents") or {}
+        mapping = {
+            "functional_document": "input/functional_document",
+            "technical_document": "input/technical_document",
+            "tasks": "input/tasks",
+        }
+        local_paths: dict[str, str] = {}
         input_dir = workspace / "input"
         input_dir.mkdir(parents=True, exist_ok=True)
-        (input_dir / "historia_usuario.txt").write_text(user_story, encoding="utf-8")
 
-        resolved_base = (base_url or "").strip() or "http://localhost:3000"
-        job_config = {
-            "base_url": base_url,
-            "frontend": frontend,
-            "backend": backend,
-            "base_url_or_default": resolved_base,
-            "endpoints_count": len(endpoints or []),
-        }
+        for field, local_base in mapping.items():
+            ref_payload = documents.get(field) or {}
+            ref = ref_payload.get("ref") if isinstance(ref_payload, dict) else ref_payload
+            if not ref:
+                raise ValueError(f"Falta referencia MinIO para documents.{field}")
+            filename = self.storage.local_name_from_ref(str(ref), field)
+            destination = input_dir / filename
+            self.storage.download_object(str(ref), destination)
+            local_paths[field] = f"input/{filename}"
+        return local_paths
+
+    def _prepare_workspace(self, record: JobRecord) -> Path:
+        workspace = self._job_workspace(record.job_id)
+        if workspace.exists():
+            shutil.rmtree(workspace)
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        flow = record.flow
+        flow_def = get_flow(flow)
+        flow_inputs = record.flow_inputs or {}
+        self._copy_project_assets(workspace)
+
+        input_dir = workspace / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        job_config: dict = {"flow": flow, "flow_inputs": flow_inputs}
+
+        if flow == "qa":
+            self._install_bundled_crew(workspace, flow_def.crew_file)
+            user_story = flow_inputs.get("user_story") or record.user_story
+            (input_dir / "historia_usuario.txt").write_text(user_story, encoding="utf-8")
+
+            base_url = flow_inputs.get("base_url")
+            frontend = bool(flow_inputs.get("frontend", True))
+            backend = bool(flow_inputs.get("backend", False))
+            endpoints = flow_inputs.get("endpoints")
+
+            resolved_base = (base_url or "").strip() or "http://localhost:3000"
+            job_config.update(
+                {
+                    "base_url": base_url,
+                    "frontend": frontend,
+                    "backend": backend,
+                    "base_url_or_default": resolved_base,
+                    "endpoints_count": len(endpoints or []),
+                }
+            )
+            if endpoints:
+                (input_dir / "endpoints.json").write_text(
+                    json.dumps(endpoints, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        elif flow == "sdd":
+            crew_payload = flow_inputs.get("crew_file") or {}
+            crew_ref = crew_payload.get("ref") if isinstance(crew_payload, dict) else crew_payload
+            if crew_ref:
+                self._install_crew_from_minio(workspace, str(crew_ref))
+            else:
+                self._install_bundled_crew(workspace, flow_def.crew_file)
+                local_paths = self._download_sdd_documents(workspace, flow_inputs)
+                job_config["sdd_local_paths"] = local_paths
+        else:
+            self._install_bundled_crew(workspace, flow_def.crew_file)
+
         (input_dir / "job_config.json").write_text(
             json.dumps(job_config, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        if endpoints:
-            (input_dir / "endpoints.json").write_text(
-                json.dumps(endpoints, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-
         (workspace / "output").mkdir(parents=True, exist_ok=True)
         return workspace
 
-    def _run_crew_sync(
-        self,
-        workspace: Path,
-        *,
-        base_url: str | None = None,
-        frontend: bool = True,
-        backend: bool = False,
-        endpoints: list[dict] | None = None,
-    ) -> str:
+    def _build_crew_inputs(self, record: JobRecord, workspace: Path) -> dict[str, str]:
+        flow = record.flow
+        flow_inputs = record.flow_inputs or {}
+
+        if flow == "qa":
+            base_url = flow_inputs.get("base_url")
+            frontend = bool(flow_inputs.get("frontend", True))
+            backend = bool(flow_inputs.get("backend", False))
+            endpoints = flow_inputs.get("endpoints")
+            resolved_base = (base_url or "").strip() or "http://localhost:3000"
+            return {
+                "hus": "input/historia_usuario.txt",
+                "base_url": base_url or "",
+                "frontend": "true" if frontend else "false",
+                "backend": "true" if backend else "false",
+                "base_url_or_default": resolved_base,
+                "endpoints_file": "input/endpoints.json" if endpoints else "",
+                "endpoints_count": str(len(endpoints or [])),
+            }
+
+        if flow == "sdd":
+            flow_inputs = record.flow_inputs or {}
+            if flow_inputs.get("crew_file"):
+                return {}
+
+            job_config_path = workspace / "input" / "job_config.json"
+            job_config = json.loads(job_config_path.read_text(encoding="utf-8"))
+            local_paths = job_config.get("sdd_local_paths") or {}
+            return {
+                "functional_document": local_paths.get("functional_document", "input/functional_document"),
+                "technical_document": local_paths.get("technical_document", "input/technical_document"),
+                "tasks_file": local_paths.get("tasks", "input/tasks"),
+            }
+
+        return {}
+
+    def _run_crew_sync(self, record: JobRecord, workspace: Path) -> str:
         load_dotenv(self.settings.project_root / ".env", override=True)
 
         if self.settings.google_api_key:
@@ -109,9 +210,12 @@ class CrewRunner:
         if self.settings.gemini_api_key:
             os.environ["GEMINI_API_KEY"] = self.settings.gemini_api_key
 
-        resolved_base = (base_url or "").strip() or "http://localhost:3000"
-        if base_url:
-            os.environ["BASE_URL"] = resolved_base
+        flow_inputs = record.flow_inputs or {}
+        if record.flow == "qa":
+            base_url = flow_inputs.get("base_url")
+            resolved_base = (base_url or "").strip() or "http://localhost:3000"
+            if base_url:
+                os.environ["BASE_URL"] = resolved_base
 
         from crewai.project.crew_loader import load_crew
 
@@ -122,16 +226,7 @@ class CrewRunner:
             sys.path.insert(0, str(workspace))
         try:
             crew, default_inputs = load_crew(workspace / "crew.jsonc")
-            inputs = {
-                **default_inputs,
-                "hus": "input/historia_usuario.txt",
-                "base_url": base_url or "",
-                "frontend": "true" if frontend else "false",
-                "backend": "true" if backend else "false",
-                "base_url_or_default": resolved_base,
-                "endpoints_file": "input/endpoints.json" if endpoints else "",
-                "endpoints_count": str(len(endpoints or [])),
-            }
+            inputs = {**default_inputs, **self._build_crew_inputs(record, workspace)}
             result = crew.kickoff(inputs=inputs)
             return str(result)
         finally:
@@ -145,12 +240,10 @@ class CrewRunner:
         return f"output/playwright/{cleaned}"
 
     def _extract_write_calls(self, text: str) -> list[dict]:
-        """Parse tool-call JSON that small models dump into the Final Answer instead of invoking tools."""
         calls: list[dict] = []
         if not text:
             return calls
 
-        # Try full JSON array / object first
         candidates: list[str] = []
         fence = re.findall(r"```(?:json)?\s*([\s\S]*?)```", text)
         candidates.extend(fence)
@@ -167,7 +260,6 @@ class CrewRunner:
             elif isinstance(parsed, list):
                 calls.extend(self._collect_write_dicts(parsed))
 
-        # Fallback: find individual write_project_file objects with regex-assisted braces
         for match in re.finditer(
             r'\{\s*"name"\s*:\s*"(?:write_project_file|Write Project File)"\s*,\s*"arguments"\s*:\s*\{',
             text,
@@ -220,10 +312,13 @@ class CrewRunner:
                 content = args.get("content")
                 if isinstance(path, str) and isinstance(content, str):
                     found.append({"path": path, "content": content})
-            # Nested OpenAI-style: {"type":"function","function":{"name":...,"arguments":...}}
             function = item.get("function")
             if isinstance(function, dict):
-                found.extend(self._collect_write_dicts([{"name": function.get("name"), "arguments": function.get("arguments")}]))
+                found.extend(
+                    self._collect_write_dicts(
+                        [{"name": function.get("name"), "arguments": function.get("arguments")}]
+                    )
+                )
         return found
 
     def _materialize_writes_from_text(self, workspace: Path, text: str) -> list[str]:
@@ -233,48 +328,16 @@ class CrewRunner:
             target = workspace / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             content = call["content"]
-            # Models sometimes wrap content in extra backticks
             if content.startswith("`") and content.endswith("`") and len(content) >= 2:
                 content = content[1:-1]
             target.write_text(content, encoding="utf-8")
             written.append(relative)
         return written
 
-    def _validate_test_cases_artifacts(self, workspace: Path) -> None:
-        from tools.test_cases_guardrail import ensure_test_cases_md, validate_test_cases_files
-
-        ensure_test_cases_md(workspace)
-
-        json_path = workspace / "output" / "test-cases" / "test-cases.json"
-        md_path = workspace / "output" / "test-cases" / "test-cases.md"
-        if not json_path.is_file() or not md_path.is_file():
-            raise MissingTestCasesArtifactsError(
-                "Missing test-cases artifacts: required output/test-cases/test-cases.json "
-                "and output/test-cases/test-cases.md."
-            )
-
-        original_cwd = Path.cwd()
-        try:
-            os.chdir(workspace)
-            ok, detail = validate_test_cases_files(None)
-        finally:
-            os.chdir(original_cwd)
-
-        if not ok:
-            raise MissingTestCasesArtifactsError(str(detail))
-
-    def _validate_playwright_artifacts(self, workspace: Path) -> None:
-        from tools.playwright_guardrail import validate_playwright_files
-
-        original_cwd = Path.cwd()
-        try:
-            os.chdir(workspace)
-            ok, detail = validate_playwright_files(None)
-        finally:
-            os.chdir(original_cwd)
-
-        if not ok:
-            raise MissingPlaywrightArtifactsError(str(detail))
+    def _run_post_validators(self, flow_id: str, workspace: Path) -> None:
+        flow_def = get_flow(flow_id)
+        for validator in flow_def.post_run_validators:
+            validator(workspace)
 
     def _upload_job_artifacts(self, job_id: str, workspace: Path) -> list[dict]:
         prefix = self.storage.job_prefix(job_id)
@@ -289,47 +352,31 @@ class CrewRunner:
         self.storage.upload_directory(f"{prefix}/output", output_dir)
         return self.storage.list_objects(prefix)
 
-    async def run_job(self, job_id: str, user_story: str) -> None:
+    async def run_job(self, job_id: str) -> None:
         async with self._semaphore:
             await self.job_store.update_job(job_id, status=JobStatus.RUNNING)
             workspace = self._job_workspace(job_id)
             record = await self.job_store.get_job(job_id)
-            base_url = record.base_url if record else None
-            frontend = record.frontend if record else True
-            backend = record.backend if record else False
-            endpoints = record.endpoints if record else None
-            try:
-                workspace = await asyncio.to_thread(
-                    self._prepare_workspace,
-                    job_id,
-                    user_story,
-                    base_url=base_url,
-                    frontend=frontend,
-                    backend=backend,
-                    endpoints=endpoints,
-                )
-                result_summary = await asyncio.to_thread(
-                    self._run_crew_sync,
-                    workspace,
-                    base_url=base_url,
-                    frontend=frontend,
-                    backend=backend,
-                    endpoints=endpoints,
-                )
+            if not record:
+                return
 
-                # Small models often dump tool calls as JSON text instead of invoking tools.
-                await asyncio.to_thread(self._materialize_writes_from_text, workspace, result_summary)
-                summary_file = workspace / "output" / "playwright" / "generation-summary.md"
-                if summary_file.exists():
-                    await asyncio.to_thread(
-                        self._materialize_writes_from_text,
-                        workspace,
-                        summary_file.read_text(encoding="utf-8"),
-                    )
+            flow = record.flow
+            try:
+                workspace = await asyncio.to_thread(self._prepare_workspace, record)
+                result_summary = await asyncio.to_thread(self._run_crew_sync, record, workspace)
+
+                if flow == "qa":
+                    await asyncio.to_thread(self._materialize_writes_from_text, workspace, result_summary)
+                    summary_file = workspace / "output" / "playwright" / "generation-summary.md"
+                    if summary_file.exists():
+                        await asyncio.to_thread(
+                            self._materialize_writes_from_text,
+                            workspace,
+                            summary_file.read_text(encoding="utf-8"),
+                        )
 
                 try:
-                    await asyncio.to_thread(self._validate_test_cases_artifacts, workspace)
-                    await asyncio.to_thread(self._validate_playwright_artifacts, workspace)
+                    await asyncio.to_thread(self._run_post_validators, flow, workspace)
                 except (MissingTestCasesArtifactsError, MissingPlaywrightArtifactsError) as validation_error:
                     artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
                     await self.job_store.update_job(
@@ -349,28 +396,27 @@ class CrewRunner:
                     artifacts=artifacts,
                 )
             except Exception as exc:
-                # If the crew crashed after dumping tool-call JSON into the summary, still try to salvage files.
-                try:
-                    summary_file = workspace / "output" / "playwright" / "generation-summary.md"
-                    if summary_file.exists():
-                        await asyncio.to_thread(
-                            self._materialize_writes_from_text,
-                            workspace,
-                            summary_file.read_text(encoding="utf-8"),
+                if flow == "qa":
+                    try:
+                        summary_file = workspace / "output" / "playwright" / "generation-summary.md"
+                        if summary_file.exists():
+                            await asyncio.to_thread(
+                                self._materialize_writes_from_text,
+                                workspace,
+                                summary_file.read_text(encoding="utf-8"),
+                            )
+                        await asyncio.to_thread(self._run_post_validators, flow, workspace)
+                        artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
+                        await self.job_store.update_job(
+                            job_id,
+                            status=JobStatus.COMPLETED,
+                            result_summary=str(exc),
+                            artifacts=artifacts,
+                            error=None,
                         )
-                    await asyncio.to_thread(self._validate_test_cases_artifacts, workspace)
-                    await asyncio.to_thread(self._validate_playwright_artifacts, workspace)
-                    artifacts = await asyncio.to_thread(self._upload_job_artifacts, job_id, workspace)
-                    await self.job_store.update_job(
-                        job_id,
-                        status=JobStatus.COMPLETED,
-                        result_summary=str(exc),
-                        artifacts=artifacts,
-                        error=None,
-                    )
-                    return
-                except Exception:
-                    pass
+                        return
+                    except Exception:
+                        pass
 
                 artifacts: list[dict] = []
                 try:
