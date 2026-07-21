@@ -11,6 +11,7 @@ COPY agents ./agents
 COPY knowledge ./knowledge
 COPY tools ./tools
 COPY callbacks ./callbacks
+COPY conditions ./conditions
 COPY crews ./crews
 COPY crew.jsonc ./crew.jsonc
 COPY service ./service

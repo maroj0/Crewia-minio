@@ -45,7 +45,7 @@ class CrewRunner:
 
     def _copy_project_assets(self, workspace: Path) -> None:
         project_root = self.settings.project_root
-        for item in ("agents", "callbacks", "knowledge", "tools"):
+        for item in ("agents", "callbacks", "conditions", "knowledge", "tools"):
             source = project_root / item
             target = workspace / item
             if source.is_dir():

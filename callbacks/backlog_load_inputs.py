@@ -9,26 +9,19 @@ Diferencias con callbacks.load_inputs (SDD):
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from callbacks.load_inputs import (
     SUPPORTED_EXTENSIONS,
     _load_document_text,
+    _project_root,
     _resolve_document_path,
+    _resolve_path,
 )
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MIN_FUNCIONAL_CHARS = 200
-
-
-def _resolve_path(raw: str | Path) -> Path:
-    path = Path(raw)
-    if not path.is_absolute():
-        path = PROJECT_ROOT / path
-    return path.resolve()
 
 
 def before_kickoff(inputs: dict[str, Any] | None) -> dict[str, Any]:
@@ -54,7 +47,7 @@ def before_kickoff(inputs: dict[str, Any] | None) -> dict[str, Any]:
         )
 
     data["funcional_text"] = funcional_text
-    data["funcional_file"] = str(funcional_path.relative_to(PROJECT_ROOT)).replace("\\", "/")
+    data["funcional_file"] = str(funcional_path.relative_to(_project_root())).replace("\\", "/")
 
     # --- epics previo (opcional) ---
     epics_raw = (data.get("epics_file") or "").strip()

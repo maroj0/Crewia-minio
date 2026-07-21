@@ -17,5 +17,5 @@
   "max_iter": 30
 
   // "max_tokens": 16000,
-  // "llm": "openai/gpt-4o"
+  // "llm": "ollama/qwen3-coder:30b"
 }
