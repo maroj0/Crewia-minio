@@ -1,0 +1,90 @@
+{
+  // ============================================================
+  // TECH-DOC GENERATOR — De requerimientos funcionales (aun
+  // incompletos) a un documento técnico completo y escalable.
+  //
+  // Pipeline (secuencial, 3 tareas, un solo agente experto):
+  //   T1: Análisis + expansión del documento funcional
+  //       -> output: documento_funcional_expandido.md
+  //   T2: Documento técnico completo (arquitectura, stack,
+  //       infra, escalabilidad, CLEAN)
+  //       -> output: documento_tecnico.md
+  //   T3: Auditoría de cobertura y versión final
+  //       -> output: documento_tecnico.md (final corregido)
+  //
+  // Reutiliza la convención === FILE: <nombre>.md === para que
+  // callbacks.save_output persista los archivos en output/.
+  // El documento_tecnico.md resultante sirve como entrada
+  // {tecnico_text} del crew sdd-generator.
+  // ============================================================
+
+  "name": "tech-doc-generator",
+
+  "agents": ["arquitecto_documentador_tecnico"],
+
+  "tasks": [
+
+    // ------------------------------------------------------------
+    // T1 — ANÁLISIS Y EXPANSIÓN DEL DOCUMENTO FUNCIONAL
+    // ------------------------------------------------------------
+    {
+      "name": "expandir_funcional_task",
+      "description": "Analizá el documento funcional de {sistema} y producí su versión EXPANDIDA y COMPLETA. Basate en el contenido real abajo; el dominio es el que describen los documentos, no otro.\n\nDOCUMENTO FUNCIONAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nCONTEXTO ADICIONAL DEL PROYECTO (restricciones, preferencias, presupuesto, equipo; puede estar vacío):\n---\n{contexto_adicional}\n---\n\nPROCEDIMIENTO OBLIGATORIO:\n1. CATALOGÁ lo que el documento SÍ define: requerimientos funcionales con ID (RF-###), reglas de negocio (RN-###), actores/roles, entidades, integraciones.\n2. RECORRÉ el checklist de completitud y detectá huecos: actores y permisos por rol; ciclo de vida y estados de cada entidad; flujos alternativos y de error de cada funcionalidad; validaciones de datos; notificaciones; reportes y consultas; auditoría; requisitos no funcionales (rendimiento, disponibilidad, seguridad, cumplimiento); integraciones externas; migración de datos; internacionalización si aplica.\n3. CERRÁ cada hueco: si existe una decisión estándar razonable para este tipo de sistema, definila y marcala como [SUPUESTO: justificación]. Si requiere decisión del negocio, registrala como [PREGUNTA ABIERTA] con opciones y tu recomendación.\n4. REDACTÁ el documento funcional expandido integrando lo original más lo agregado, con los RF y RN numerados de forma continua (los agregados por vos también llevan ID y su marca [SUPUESTO]).\n5. Cerrá con: '## Huecos detectados y cómo se resolvieron' (tabla hueco -> resolución) y '## Preguntas abiertas' (si las hay).\n\nFORMATO DE SALIDA OBLIGATORIO: el delimitador === FILE: documento_funcional_expandido.md === en su propia línea, seguido del documento completo en español. Sin bloque de código externo.",
+      "expected_output": "Texto plano con el delimitador === FILE: documento_funcional_expandido.md === en su línea y luego el documento funcional expandido completo en español: catálogo de RF/RN con IDs, roles y permisos, entidades con estados, flujos con alternativos y errores, requisitos no funcionales, supuestos marcados [SUPUESTO], la tabla de huecos resueltos y las preguntas abiertas.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "arquitecto_documentador_tecnico"
+    },
+
+    // ------------------------------------------------------------
+    // T2 — DOCUMENTO TÉCNICO COMPLETO
+    // ------------------------------------------------------------
+    {
+      "name": "redactar_documento_tecnico_task",
+      "description": "Con el documento funcional expandido (tarea anterior) como contrato, redactá el DOCUMENTO TÉCNICO COMPLETO de {sistema}, apto para arrancar como proyecto pequeño y crecer a gran escala, con código CLEAN como premisa. Contexto adicional del proyecto (puede estar vacío):\n---\n{contexto_adicional}\n---\n\nCONTENIDO MÍNIMO OBLIGATORIO (todas las secciones, con máximo detalle):\n1. VISIÓN TÉCNICA Y ALCANCE: objetivos técnicos, restricciones, atributos de calidad priorizados con metas medibles (ej.: p95 de latencia, disponibilidad objetivo, RPO/RTO).\n2. ARQUITECTURA: estilo elegido y justificación; diagramas mermaid C4 (contexto y contenedores); aplicación de Clean Architecture: capas (dominio, aplicación, infraestructura, presentación), regla de dependencia, puertos y adaptadores; módulos/bounded contexts con responsabilidades y contratos entre ellos.\n3. RUTA DE ESCALABILIDAD POR FASES: Fase 1 (arranque pequeño, típicamente monolito modular), fases siguientes (extracción de servicios, escalado horizontal, caché, colas, réplicas, particionado); por cada transición, las señales medibles que la disparan y las decisiones de Fase 1 que la abaratan (límites de módulo, outbox, idempotencia, contratos versionados).\n4. STACK TECNOLÓGICO: por cada capa (lenguaje/framework backend, frontend si aplica, base de datos, mensajería, caché, autenticación) la elección, su justificación contra los requerimientos y el contexto, y al menos una alternativa comparada. Registrá las decisiones mayores como ADRs (contexto, decisión, consecuencias).\n5. MODELO DE DATOS: diagrama mermaid erDiagram y diccionario de datos por entidad (columnas, tipos, claves, índices) derivado de las entidades del funcional expandido.\n6. DISEÑO DE APIs: convenciones (versionado, errores, paginación, idempotencia) y contratos de los endpoints principales con ejemplos de request/response.\n7. SEGURIDAD: autenticación, autorización (matriz roles vs. permisos), protección de datos, gestión de secretos, amenazas y mitigaciones (OWASP).\n8. INFRAESTRUCTURA Y OPERACIÓN: contenedores, orquestación por fase, IaC, entornos, pipeline CI/CD con gates de calidad, estrategia de despliegue y rollback, backups, observabilidad (logs estructurados, métricas, trazas, alertas).\n9. ESTÁNDARES DE CÓDIGO CLEAN: estructura de carpetas por capa/módulo, convenciones de nombres, SOLID aplicado con ejemplos del dominio, manejo de errores, política de tests por nivel y umbrales, criterios de code review.\n10. PLAN DE IMPLEMENTACIÓN: etapas, entregables y dependencias.\n11. MATRIZ DE TRAZABILIDAD: tabla RF/RN -> componentes técnicos que lo implementan (módulo, endpoint, entidad). NINGÚN RF puede quedar sin fila.\nMarcá con [SUPUESTO] toda decisión no derivable del funcional ni del contexto. Todo en español.\n\nFORMATO DE SALIDA OBLIGATORIO: el delimitador === FILE: documento_tecnico.md === en su propia línea, seguido del documento completo. Sin bloque de código externo.",
+      "expected_output": "Texto plano con el delimitador === FILE: documento_tecnico.md === en su línea y luego el documento técnico completo en español con las once secciones obligatorias, diagramas mermaid, ADRs, ruta de escalabilidad por fases con señales medibles, estándares de código CLEAN y la matriz de trazabilidad RF/RN -> componentes.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "arquitecto_documentador_tecnico",
+      "context": ["expandir_funcional_task"]
+    },
+
+    // ------------------------------------------------------------
+    // T3 — AUDITORÍA DE COBERTURA Y VERSIÓN FINAL
+    // ------------------------------------------------------------
+    {
+      "name": "auditar_documento_tecnico_task",
+      "description": "Auditá el documento técnico (tarea anterior) contra el documento funcional expandido y el funcional original abajo. PROCEDIMIENTO: (1) verificá RF por RF y RN por RN que la matriz de trazabilidad los cubre y que los componentes citados existen realmente en el documento; (2) verificá que las once secciones obligatorias están presentes y con contenido concreto (nada de generalidades no accionables); (3) verificá consistencia interna: el modelo de datos soporta los flujos, las APIs cubren los casos de uso, la seguridad cubre todos los roles, la ruta de escalabilidad es coherente con el stack; (4) verificá que todo lo no derivable de las fuentes está marcado [SUPUESTO]; (5) REESCRIBÍ el documento completo corrigiendo cada omisión o inconsistencia — no entregues solo observaciones.\n\nDOCUMENTO FUNCIONAL ORIGINAL ({funcional_file}):\n---\n{funcional_text}\n---\n\nFORMATO DE SALIDA OBLIGATORIO: primero una sección 'INFORME DE AUDITORÍA' (verificación RF por RF, omisiones halladas y corregidas); luego el delimitador === FILE: documento_tecnico.md === en su propia línea seguido del documento final completo en español. Sin bloque de código externo.",
+      "expected_output": "Texto plano con el INFORME DE AUDITORÍA y luego el delimitador === FILE: documento_tecnico.md === en su línea seguido del documento técnico final, completo, corregido y en español, con su matriz de trazabilidad sin RF ni RN faltantes.",
+      "guardrails": [
+        "La salida no está vacía y está redactada en español."
+      ],
+      "guardrail_max_retries": 1,
+      "agent": "arquitecto_documentador_tecnico",
+      "context": ["expandir_funcional_task", "redactar_documento_tecnico_task"]
+    }
+  ],
+
+  "process": "sequential",
+  "verbose": true,
+  "memory": false,
+
+  "before_kickoff_callbacks": [{"python": "callbacks.load_inputs.before_kickoff"}],
+  "task_callback": {"python": "callbacks.save_output.on_task_complete"},
+  "after_kickoff_callbacks": [{"python": "callbacks.save_output.after_kickoff"}],
+
+  "inputs": {
+    // Nombre corto del sistema; se interpola como {sistema} en las tareas.
+    "sistema": "el sistema descrito en el documento funcional",
+    "funcional_file": "inputs/documento_funcional.pdf",
+    "funcional_text": "",
+    // Restricciones y preferencias del proyecto: stack preferido, tamaño
+    // de equipo, presupuesto, plazos, cumplimiento. Mejora mucho la
+    // precisión de las decisiones del arquitecto. Puede quedar vacío.
+    "contexto_adicional": "Sin contexto adicional. Decidí con los estándares de la industria y marcá los supuestos."
+  }
+}
