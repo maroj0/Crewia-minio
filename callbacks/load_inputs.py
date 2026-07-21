@@ -8,8 +8,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 DEFAULT_FILES = {
     "funcional_file": "inputs/documento_funcional.md",
     "tecnico_file": "inputs/documento_tecnico.md",
@@ -17,6 +15,11 @@ DEFAULT_FILES = {
 
 # Preferred order when resolving by stem (Markdown first).
 SUPPORTED_EXTENSIONS = (".md", ".txt", ".pdf")
+
+
+def _project_root() -> Path:
+    """Directorio raíz del job; crew_runner hace chdir al workspace antes del kickoff."""
+    return Path.cwd()
 
 
 def _read_plain_text(path: Path) -> str:
@@ -51,7 +54,7 @@ def _load_document_text(path: Path) -> str:
 def _resolve_path(raw: str | Path) -> Path:
     path = Path(raw)
     if not path.is_absolute():
-        path = PROJECT_ROOT / path
+        path = _project_root() / path
     return path.resolve()
 
 
@@ -96,10 +99,10 @@ def before_kickoff(inputs: dict[str, Any] | None) -> dict[str, Any]:
     funcional_text = _load_document_text(funcional_path)
     tecnico_text = _load_document_text(tecnico_path)
 
-    data["funcional_file"] = str(funcional_path.relative_to(PROJECT_ROOT)).replace(
+    data["funcional_file"] = str(funcional_path.relative_to(_project_root())).replace(
         "\\", "/"
     )
-    data["tecnico_file"] = str(tecnico_path.relative_to(PROJECT_ROOT)).replace(
+    data["tecnico_file"] = str(tecnico_path.relative_to(_project_root())).replace(
         "\\", "/"
     )
     data["funcional_text"] = funcional_text

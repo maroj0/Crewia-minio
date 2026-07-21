@@ -17,6 +17,7 @@ from service.minio_client import MinioStorage
 from service.schemas import (
     ArtifactInfo,
     ArtifactsResponse,
+    CreateBacklogJobRequest,
     CreateQaJobRequest,
     CreateSddJobRequest,
     FlowInfo,
@@ -128,7 +129,7 @@ async def health() -> dict[str, str]:
 )
 async def create_job(
     request: Annotated[
-        Union[CreateQaJobRequest, CreateSddJobRequest],
+        Union[CreateQaJobRequest, CreateSddJobRequest, CreateBacklogJobRequest],
         Body(discriminator="flow"),
     ],
     background_tasks: BackgroundTasks,
@@ -138,6 +139,7 @@ async def create_job(
 
     - **qa**: `user_story`, opcionalmente `base_url`, `frontend`, `backend`, `endpoints`.
     - **sdd**: `documents` (funcional + técnico + tareas en MinIO) **o** `crew_file` (crew.jsonc en MinIO).
+    - **backlog**: `funcional_minio_path` (obligatorio), `generate_epics`, `generate_hus`, opcionalmente `epics_minio_path`, `epicas_seleccionadas`, `sistema`.
     """
     flow_inputs = request.to_flow_inputs()
     prefix = None
@@ -169,9 +171,35 @@ async def create_job(
                 f"{prefix}/input/endpoints.json",
                 endpoints_payload,
             )
-    else:
+    elif isinstance(request, CreateSddJobRequest):
         record = await job_store.create_job(
             flow="sdd",
+            flow_inputs=flow_inputs,
+            user_story="",
+            frontend=False,
+            backend=False,
+        )
+        prefix = storage.job_prefix(record.job_id)
+    else:
+        # backlog flow — validate MinIO paths exist before queueing
+        funcional_bucket, funcional_key = storage.parse_object_ref(request.funcional_minio_path)
+        if not await asyncio.to_thread(storage.object_exists, funcional_bucket, funcional_key):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"funcional_minio_path no encontrado en MinIO: {request.funcional_minio_path}",
+            )
+        if request.epics_minio_path:
+            epics_bucket, epics_key = storage.parse_object_ref(request.epics_minio_path)
+            if not await asyncio.to_thread(storage.object_exists, epics_bucket, epics_key):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"epics_minio_path no encontrado en MinIO: {request.epics_minio_path}",
+                )
+        warnings = request.validation_warnings()
+        if warnings:
+            flow_inputs["_warnings"] = warnings
+        record = await job_store.create_job(
+            flow="backlog",
             flow_inputs=flow_inputs,
             user_story="",
             frontend=False,
